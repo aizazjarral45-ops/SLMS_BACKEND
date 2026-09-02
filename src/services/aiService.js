@@ -14,19 +14,29 @@ async function createChatConversation(userId, title = 'New conversation') {
     userId,
     title,
     provider: 'gemini',
-    model: process.env.AI_MODEL || 'gemini-1.5-flash',
+    model: process.env.AI_MODEL?.trim() || 'gemini-3.5-flash-lite',
     messages: [],
   });
 }
 
 async function generateAIReply(conversation) {
   const ai = getGeminiClient();
+  const model = process.env.AI_MODEL?.trim();
+  if (!model) {
+    throw new Error('Gemini is not configured. Set AI_MODEL in the backend environment.');
+  }
+
+  if (conversation.model !== model) {
+    conversation.model = model;
+    await conversation.save();
+  }
+
   const contents = conversation.messages.map((message) => ({
     role: message.role === 'assistant' ? 'model' : message.role,
     parts: [{ text: message.content }],
   }));
   const response = await ai.models.generateContent({
-    model: conversation.model || 'gemini-1.5-flash',
+    model,
     contents,
   });
   const reply = response.text?.trim();

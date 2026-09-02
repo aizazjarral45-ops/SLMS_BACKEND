@@ -187,11 +187,16 @@ const me = asyncHandler(async (req, res) => {
 
 const changePassword = asyncHandler(async (req, res) => {
   const { currentPassword, newPassword } = req.body;
+  if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 8) {
+    return errorResponse(res, 'Current password and a new password of at least 8 characters are required', null, 400);
+  }
   const user = await User.findById(req.user._id);
+  if (!user) return errorResponse(res, 'User not found', null, 404);
   const valid = await bcrypt.compare(currentPassword, user.passwordHash);
   if (!valid) return errorResponse(res, 'Current password is incorrect', null, 400);
 
   user.passwordHash = await bcrypt.hash(newPassword, 10);
+  user.tokenVersion = (user.tokenVersion || 0) + 1;
   await user.save();
   await LoginHistory.create({ userId: user._id, email: user.email, status: 'success', sessionId: req.session?.sessionId || '', ...getRequestMeta(req) });
   return successResponse(res, 'Password updated successfully', null, 200);

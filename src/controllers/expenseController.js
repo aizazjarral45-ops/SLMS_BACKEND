@@ -68,6 +68,10 @@ const updateExpense = asyncHandler(async (req, res) => {
     String(expense.userId) !== String(req.user._id)
   )
     return errorResponse(res, "Forbidden", null, 403);
+  if (req.body.amount !== undefined &&
+    (!Number.isFinite(Number(req.body.amount)) || Number(req.body.amount) < 0)) {
+  return errorResponse(res, "Amount must be a valid non-negative number", null, 400);
+  }
   const previousStatus = expense.status;
   fields.forEach((field) => {
     if (
@@ -115,4 +119,3 @@ const deleteExpense = asyncHandler(async (req, res) => {
   return successResponse(res, "Expense deleted", {}, 200);
 });
 module.exports = { listExpenses, createExpense, updateExpense, deleteExpense }
-

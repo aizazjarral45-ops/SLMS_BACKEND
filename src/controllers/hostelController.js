@@ -171,6 +171,9 @@ const deleteHostelRecord = asyncHandler(async (req, res) => {
   const record = await Hostel.findById(req.params.id);
   if (!record) return errorResponse(res, 'Hostel record not found', null, 404);
   if (req.user.role === 'student' && String(record.userId) !== String(req.user._id)) return errorResponse(res, 'Forbidden', null, 403);
+  if (req.user.role === 'student' && record.status !== 'Pending') {
+    return errorResponse(res, 'Only pending hostel applications can be deleted', null, 409);
+  }
   await record.deleteOne();
   if (req.user.role !== 'student') await createNotification({ userId: record.userId, sourceUserId: req.user._id, title: 'Hostel application removed', message: 'An administrator removed your hostel application.', type: 'hostel', module: 'hostel' });
   return successResponse(res, 'Hostel record deleted', {}, 200);

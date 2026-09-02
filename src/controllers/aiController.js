@@ -45,7 +45,13 @@ const sendMessage = asyncHandler(async (req, res) => {
   conversation.messages.push(userMessage);
   await conversation.save();
 
-  const replyText = await generateAIReply(conversation);
+  let replyText;
+  try {
+    replyText = await generateAIReply(conversation);
+  } catch (error) {
+    console.error("Failed to generate AI reply:", error);
+    return errorResponse(res, "Failed to generate AI reply", null, 500);
+  }
   const assistantMessage = { role: "assistant", content: replyText };
   conversation.messages.push(assistantMessage);
   await conversation.save();

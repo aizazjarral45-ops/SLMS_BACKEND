@@ -27,7 +27,12 @@ const updateFee = asyncHandler(async (req, res) => {
   if (!fee) return errorResponse(res, 'Fee not found', null, 404);
   if (req.user.role === 'student' && String(fee.userId) !== String(req.user._id)) return errorResponse(res, 'Forbidden', null, 403);
 
-  Object.assign(fee, req.body);
+  const fields = ['feeType', 'amount', 'dueDate', 'paidAmount', 'status', 'invoiceNumber', 'paymentMethod'];
+  fields.forEach((field) => {
+    if (req.body[field] !== undefined) fee[field] = field === 'amount' || field === 'paidAmount'
+      ? Number(req.body[field])
+      : req.body[field];
+  });
   await fee.save();
   return successResponse(res, 'Fee updated', { fee }, 200);
 });

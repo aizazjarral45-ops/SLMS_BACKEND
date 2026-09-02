@@ -15,19 +15,33 @@ const updateProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
   if (!user) return errorResponse(res, 'User not found', null, 404);
 
-  if (name) user.name = name;
-  if (phone) user.phone = phone;
+  if (name !== undefined) user.name = String(name).trim();
+  if (phone !== undefined) user.phone = String(phone).trim();
 
-  if (program || semester || batch) {
-    user.profile = { ...user.profile, program: program || user.profile.program, semester: semester || user.profile.semester, batch: batch || user.profile.batch };
+  if (program !== undefined || semester !== undefined || batch !== undefined) {
+    user.profile = {
+      ...user.profile,
+      ...(program !== undefined ? { program } : {}),
+      ...(semester !== undefined ? { semester } : {}),
+      ...(batch !== undefined ? { batch } : {}),
+    };
   }
 
   await user.save();
 
   await StudentProfile.findOneAndUpdate(
     { userId: user._id },
-    { $set: { fullName: name || user.name, phone: phone || '', program: program || '', semester: semester || '', batch: batch || '' } },
-    { upsert: true, new: true },
+    {
+      $set: {
+        ...(name !== undefined ? { fullName: user.name } : {}),
+        ...(phone !== undefined ? { phone: user.phone } : {}),
+        ...(program !== undefined ? { program } : {}),
+        ...(semester !== undefined ? { semester } : {}),
+        ...(batch !== undefined ? { batch } : {}),
+      },
+      $setOnInsert: { userId: user._id },
+    },
+    { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
   );
 
   const safeUser = user.toObject();
@@ -36,8 +50,8 @@ const updateProfile = asyncHandler(async (req, res) => {
 });
 
 const listUsers = asyncHandler(async (req, res) => {
-  const page = Number(req.query.page) || 1;
-  const limit = Number(req.query.limit) || 20;
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
   const search = req.query.search || '';
   const filter = {};
 
@@ -60,7 +74,8 @@ const deleteUser = asyncHandler(async (req, res) => {
     return errorResponse(res, 'You cannot delete your own account here', null, 400);
   }
 
-  await User.findByIdAndDelete(id);
+  const deleted = await User.findByIdAndDelete(id);
+  if (!deleted) return errorResponse(res, 'User not found', null, 404);
   return successResponse(res, 'User deleted', null, 200);
 });
 

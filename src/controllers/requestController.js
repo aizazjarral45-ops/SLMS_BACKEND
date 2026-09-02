@@ -12,12 +12,15 @@ const listRequests = asyncHandler(async (req, res) => {
 });
 
 const createRequest = asyncHandler(async (req, res) => {
+  if (!String(req.body.title || '').trim() || !String(req.body.description || '').trim()) {
+    return errorResponse(res, 'Request title and description are required', null, 400);
+  }
   const newRequest = await Request.create({
     userId: req.user._id,
-    title: req.body.title,
+    title: String(req.body.title).trim(),
     category: req.body.category,
     type: req.body.type,
-    description: req.body.description,
+    description: String(req.body.description).trim(),
     status: 'Submitted',
     priority: req.body.priority || 'Medium',
     requestedBy: req.user.name,
@@ -68,6 +71,11 @@ const updateRequestStatus = asyncHandler(async (req, res) => {
 });
 
 const getRequestStatusHistory = asyncHandler(async (req, res) => {
+  const item = await Request.findById(req.params.id).select('userId');
+  if (!item) return errorResponse(res, 'Request not found', null, 404);
+  if (req.user.role === 'student' && String(item.userId) !== String(req.user._id)) {
+    return errorResponse(res, 'Forbidden', null, 403);
+  }
   const history = await StatusHistory.find({ entityType: 'Request', entityId: req.params.id }).sort({ createdAt: -1 });
   return successResponse(res, 'Request status history', { history }, 200);
 });
