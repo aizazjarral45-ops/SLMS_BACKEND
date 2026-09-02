@@ -34,10 +34,4 @@ function emitToUser(userId, event, payload) {
   }
 }
 
-function emitToAdmins(event, payload) {
-  if (io) {
-    io.to('admin-room').emit(event, payload);
-  }
-}
-
-module.exports = { initSocket, emitToUser, emitToAdmins };
+module.exports = { initSocket, emitToUser };

@@ -11,6 +11,7 @@ router.post('/refresh-token', refreshToken);
 router.get('/me', authenticate, me);
 router.post('/change-password', authenticate, changePassword);
 router.post('/forgot-password', forgotPassword);
+router.post('/verify-otp', verifyResetToken);
 router.post('/reset-password', resetPassword);
 router.post('/password-reset/request', forgotPassword);
 router.post('/password-reset/verify', verifyResetToken);

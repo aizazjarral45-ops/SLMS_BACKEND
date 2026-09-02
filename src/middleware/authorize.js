@@ -15,13 +15,4 @@ function authorize(...allowedRoles) {
   };
 }
 
-function requirePermission(permissionCode) {
-  return (req, res, next) => {
-    if (!req.user || !req.user.permissions || !req.user.permissions.includes(permissionCode)) {
-      return errorResponse(res, 'Permission denied', null, 403);
-    }
-    next();
-  };
-}
-
-module.exports = { authorize, requirePermission };
+module.exports = { authorize };

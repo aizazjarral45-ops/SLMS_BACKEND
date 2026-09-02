@@ -5,8 +5,11 @@ const passwordResetTokenSchema = new mongoose.Schema({
   email: { type: String, required: true, lowercase: true, trim: true, index: true },
   otpHash: { type: String, required: true },
   expiresAt: { type: Date, required: true, index: { expires: 0 } },
+  resetTokenHash: { type: String, default: null },
+  resetTokenExpiresAt: { type: Date, default: null },
   attempts: { type: Number, default: 0 },
   verifiedAt: { type: Date, default: null },
+  consumedAt: { type: Date, default: null },
 }, { timestamps: true });
 
 module.exports = mongoose.model('PasswordResetToken', passwordResetTokenSchema);

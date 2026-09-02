@@ -6,7 +6,7 @@ const Session = require('../models/Session');
 const LoginHistory = require('../models/LoginHistory');
 const StudentProfile = require('../models/StudentProfile');
 const PasswordResetToken = require('../models/PasswordResetToken');
-const { signToken, hashToken } = require('../services/authService');
+const { signToken } = require('../services/authService');
 const { sendPasswordResetOtp } = require('../services/emailService');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
@@ -23,6 +23,15 @@ function issueTokens(user, sessionId) {
   const accessToken = signToken(payload, process.env.JWT_ACCESS_SECRET, process.env.ACCESS_TOKEN_EXPIRES || '15m');
   const refreshToken = signToken(payload, process.env.JWT_REFRESH_SECRET, process.env.REFRESH_TOKEN_EXPIRES || '7d');
   return { accessToken, refreshToken };
+}
+
+async function hashResetCode(code) {
+  return bcrypt.hash(code, 10);
+}
+
+async function codesMatch(code, storedHash) {
+  if (!storedHash || !/^\d{6}$/.test(code)) return false;
+  return bcrypt.compare(code, storedHash);
 }
 
 const register = asyncHandler(async (req, res) => {
@@ -210,51 +219,71 @@ const createResetToken = asyncHandler(async (req, res) => {
 
   const otp = String(crypto.randomInt(100000, 1000000));
   await PasswordResetToken.deleteMany({ email });
-  await PasswordResetToken.create({
+  const reset = await PasswordResetToken.create({
     userId: user._id,
     email,
-    otpHash: crypto.createHash('sha256').update(otp).digest('hex'),
+    otpHash: await hashResetCode(otp),
     expiresAt: new Date(Date.now() + 10 * 60 * 1000),
   });
-  await sendPasswordResetOtp(email, otp);
-  return successResponse(res, 'Password reset code sent', { email }, 200);
+  try {
+    await sendPasswordResetOtp(email, otp);
+  } catch (error) {
+    await PasswordResetToken.deleteOne({ _id: reset._id });
+    throw error;
+  }
+  return successResponse(res, 'OTP sent to email successfully.', null, 200);
 });
 
 const verifyResetToken = asyncHandler(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
-  const code = String(req.body.code || '').trim();
-  const reset = await PasswordResetToken.findOne({ email }).sort({ createdAt: -1 });
+  const code = String(req.body.otp || req.body.code || '').trim();
+  if (!email || !/^\d{6}$/.test(code)) {
+    return errorResponse(res, 'Email and a valid six-digit OTP are required', null, 400);
+  }
+  const reset = await PasswordResetToken.findOne({ email, consumedAt: null }).sort({ createdAt: -1 });
   if (!reset || reset.expiresAt <= new Date()) return errorResponse(res, 'Code is invalid or expired', null, 400);
   if (reset.attempts >= 5) return errorResponse(res, 'Too many verification attempts', null, 429);
-  const hash = crypto.createHash('sha256').update(code).digest('hex');
-  if (hash !== reset.otpHash) {
+  if (!await codesMatch(code, reset.otpHash)) {
     reset.attempts += 1;
     await reset.save();
     return errorResponse(res, 'Code is invalid or expired', null, 400);
   }
+  const resetToken = crypto.randomBytes(32).toString('hex');
   reset.verifiedAt = new Date();
+  reset.resetTokenHash = await hashResetCode(resetToken);
+  reset.resetTokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
   await reset.save();
-  return successResponse(res, 'Code verified', null, 200);
+  return successResponse(res, 'OTP verified successfully.', { resetToken }, 200);
 });
 
 const resetPassword = asyncHandler(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
-  const code = String(req.body.code || '').trim();
-  const password = String(req.body.password || '');
-  if (!email || !code || password.length < 8) {
-    return errorResponse(res, 'Email, code and a password of at least 8 characters are required', null, 400);
+  const resetToken = String(req.body.resetToken || '').trim();
+  const legacyCode = String(req.body.code || '').trim();
+  const password = String(req.body.newPassword || req.body.password || '');
+  if (!email || (!resetToken && !legacyCode) || password.length < 8) {
+    return errorResponse(res, 'Email, reset token and a password of at least 8 characters are required', null, 400);
   }
-  const reset = await PasswordResetToken.findOne({ email }).sort({ createdAt: -1 });
-  const hash = crypto.createHash('sha256').update(code).digest('hex');
-  if (!reset || reset.expiresAt <= new Date() || !reset.verifiedAt || hash !== reset.otpHash) {
-    return errorResponse(res, 'Code must be verified before resetting the password', null, 400);
+  const reset = await PasswordResetToken.findOne({ email, consumedAt: null }).sort({ createdAt: -1 });
+  const tokenValid = resetToken
+    ? reset && reset.resetTokenExpiresAt > new Date() && reset.resetTokenHash && await bcrypt.compare(resetToken, reset.resetTokenHash)
+    : reset && await codesMatch(legacyCode, reset.otpHash);
+  if (!reset || reset.expiresAt <= new Date() || !reset.verifiedAt || !tokenValid) {
+    return errorResponse(res, 'Reset authorization is invalid or expired', null, 400);
   }
+  const consumed = await PasswordResetToken.findOneAndUpdate(
+    { _id: reset._id, consumedAt: null, expiresAt: { $gt: new Date() } },
+    { $set: { consumedAt: new Date() } },
+    { new: true },
+  );
+  if (!consumed) return errorResponse(res, 'Code must be verified before resetting the password', null, 400);
   const user = await User.findById(reset.userId);
   if (!user) return errorResponse(res, 'User not found', null, 404);
-  user.passwordHash = await bcrypt.hash(password, 12);
+  user.passwordHash = await bcrypt.hash(password, 10);
+  user.tokenVersion = (user.tokenVersion || 0) + 1;
   await user.save();
-  await PasswordResetToken.deleteMany({ email });
-  return successResponse(res, 'Password reset successful', null, 200);
+  await PasswordResetToken.deleteOne({ _id: reset._id });
+  return successResponse(res, 'Password updated successfully. Please login.', null, 200);
 });
 
 const forgotPassword = createResetToken;
