@@ -6,6 +6,6 @@ const router = express.Router();
 
 router.get('/', listFees);
 router.post('/', authorize('student'), createFee);
-router.put('/:id', updateFee);
+router.put('/:id', authorize('student', 'admin', 'super_admin'), updateFee);
 
 module.exports = router;

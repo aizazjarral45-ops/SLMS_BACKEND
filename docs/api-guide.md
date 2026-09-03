@@ -47,7 +47,8 @@ Authorization: Bearer <access_token>
 - POST `/api/auth/change-password` — change password
 - POST `/api/auth/forgot-password` — request reset
 - POST `/api/auth/reset-password` — reset password
-- GET `/api/auth/login-history` — login history
+- GET `/api/auth/history` — authenticated user's complete security history
+- GET `/api/auth/login/history` — login history
 
 ### Users
 

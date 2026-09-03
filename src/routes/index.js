@@ -8,6 +8,7 @@ const requestRoutes = require('./requestRoutes');
 const hostelRoutes = require('./hostelRoutes');
 const expenseRoutes = require('./expenseRoutes');
 const notificationRoutes = require('./notificationRoutes');
+const reminderRoutes = require('./reminderRoutes');
 const fileRoutes = require('./fileRoutes');
 const academicRoutes = require('./academicRoutes');
 const assignmentRoutes = require('./assignmentRoutes');
@@ -32,6 +33,7 @@ router.use('/requests', authenticate, requestRoutes);
 router.use('/hostel', authenticate, hostelRoutes);
 router.use('/expenses', authenticate, expenseRoutes);
 router.use('/notifications', authenticate, notificationRoutes);
+router.use('/reminders', authenticate, reminderRoutes);
 router.use('/files', authenticate, fileRoutes);
 router.use('/academic', authenticate, academicRoutes);
 router.use('/assignments', authenticate, assignmentRoutes);
@@ -52,3 +54,4 @@ router.use((_req, res) => {
 });
 
 module.exports = router;
+

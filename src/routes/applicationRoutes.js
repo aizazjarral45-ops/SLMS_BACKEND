@@ -6,6 +6,6 @@ const router = express.Router();
 
 router.get('/', listApplications);
 router.post('/', authorize('student'), createApplication);
-router.put('/:id', updateApplication);
+router.put('/:id', authorize('student', 'admin', 'super_admin'), updateApplication);
 
 module.exports = router;

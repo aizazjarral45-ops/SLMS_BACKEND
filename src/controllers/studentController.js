@@ -40,30 +40,30 @@ const PROFILE_FIELDS = [
 ];
 
 const getStudentDashboard = asyncHandler(async (req, res) => {
-  const profile = await StudentProfile.findOne({ userId: req.user._id });
+  const profile = await StudentProfile.findOne({ userId: req.userId });
   const [academicProfile, courses, exams, attendance] = await Promise.all([
-    AcademicProfile.findOne({ userId: req.user._id }),
-    Course.find({ userId: req.user._id }).sort({ createdAt: -1 }),
-    Exam.find({ userId: req.user._id }).sort({ examDate: 1, createdAt: -1 }),
-    Attendance.find({ userId: req.user._id }).sort({ createdAt: -1 }),
+    AcademicProfile.findOne({ userId: req.userId }),
+    Course.find({ userId: req.userId }).sort({ createdAt: -1 }),
+    Exam.find({ userId: req.userId }).sort({ examDate: 1, createdAt: -1 }),
+    Attendance.find({ userId: req.userId }).sort({ createdAt: -1 }),
   ]);
-  const complaints = await Complaint.find({ userId: req.user._id })
+  const complaints = await Complaint.find({ userId: req.userId })
     .sort({ createdAt: -1 })
     .limit(10);
-  const requests = await Request.find({ userId: req.user._id })
+  const requests = await Request.find({ userId: req.userId })
     .sort({ createdAt: -1 })
     .limit(10);
-  const expenses = await Expense.find({ userId: req.user._id })
+  const expenses = await Expense.find({ userId: req.userId })
     .sort({ createdAt: -1 })
     .limit(10);
-  const hostel = await Hostel.find({ userId: req.user._id }).sort({
+  const hostel = await Hostel.find({ userId: req.userId }).sort({
     createdAt: -1,
   });
-  const assignments = await Assignment.find({ userId: req.user._id }).sort({
+  const assignments = await Assignment.find({ userId: req.userId }).sort({
     dueDate: 1,
     createdAt: -1,
   });
-  const fees = await Fee.find({ userId: req.user._id })
+  const fees = await Fee.find({ userId: req.userId })
     .sort({ createdAt: -1 })
     .limit(10);
 
@@ -91,7 +91,7 @@ const getStudentDashboard = asyncHandler(async (req, res) => {
 });
 
 const getStudentProfile = asyncHandler(async (req, res) => {
-  const profile = await StudentProfile.findOne({ userId: req.user._id });
+  const profile = await StudentProfile.findOne({ userId: req.userId });
   if (!profile) return errorResponse(res, "Profile not found", null, 404);
   return successResponse(res, "Student profile", { profile }, 200);
 });
@@ -119,8 +119,8 @@ const updateStudentProfile = asyncHandler(async (req, res) => {
       400,
     );
   const updated = await StudentProfile.findOneAndUpdate(
-    { userId: req.user._id },
-    { $set: update, $setOnInsert: { userId: req.user._id } },
+    { userId: req.userId },
+    { $set: update, $setOnInsert: { userId: req.userId } },
     { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
   );
   return successResponse(

@@ -1,4 +1,5 @@
 const AIConversation = require("../models/AIConversation");
+const mongoose = require("mongoose");
 const {
   createChatConversation,
   generateAIReply,
@@ -59,9 +60,37 @@ const sendMessage = asyncHandler(async (req, res) => {
   return successResponse(res, "AI reply generated", { conversation }, 200);
 });
 
+const clearHistory = asyncHandler(async (req, res) => {
+  const result = await AIConversation.deleteMany({ userId: req.user._id });
+  return successResponse(
+    res,
+    "AI conversation history deleted",
+    { deletedCount: result.deletedCount },
+    200,
+  );
+});
+
+const deleteHistoryItem = asyncHandler(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return errorResponse(res, "Conversation not found", null, 404);
+  }
+
+  const result = await AIConversation.deleteOne({
+    _id: req.params.id,
+    userId: req.user._id,
+  });
+  if (!result.deletedCount) {
+    return errorResponse(res, "Conversation not found", null, 404);
+  }
+
+  return successResponse(res, "AI conversation deleted", null, 200);
+});
+
 module.exports = {
   listConversations,
   createConversation,
   getConversation,
   sendMessage,
+  clearHistory,
+  deleteHistoryItem,
 };

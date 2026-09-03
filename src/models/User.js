@@ -13,6 +13,8 @@ const userSchema = new mongoose.Schema({
   tokenVersion: { type: Number, default: 0 },
   lastLoginAt: { type: Date, default: null },
   lastSeenAt: { type: Date, default: Date.now },
+  failedLoginAttempts: { type: Number, default: 0, min: 0 },
+  lockoutUntil: { type: Date, default: null },
   profile: {
     studentId: { type: String, default: '' },
     program: { type: String, default: '' },

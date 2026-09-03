@@ -1,8 +1,17 @@
 const express = require('express');
-const { listConversations, createConversation, getConversation, sendMessage } = require('../controllers/aiController');
+const {
+  listConversations,
+  createConversation,
+  getConversation,
+  sendMessage,
+  clearHistory,
+  deleteHistoryItem,
+} = require('../controllers/aiController');
 
 const router = express.Router();
 
+router.delete('/history', clearHistory);
+router.delete('/history/:id', deleteHistoryItem);
 router.get('/conversations', listConversations);
 router.post('/conversations', createConversation);
 router.get('/conversations/:id', getConversation);

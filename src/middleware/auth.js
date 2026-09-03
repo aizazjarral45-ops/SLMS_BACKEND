@@ -25,6 +25,9 @@ async function authenticate(req, res, next) {
     if (!user) {
       return errorResponse(res, 'User not found', null, 401);
     }
+    if (user.status === 'Blocked') {
+      return errorResponse(res, 'Account is locked', null, 423);
+    }
     if ((decoded.tokenVersion || 0) !== (user.tokenVersion || 0)) {
       return errorResponse(res, 'Token is no longer valid', null, 401);
     }
@@ -41,6 +44,7 @@ async function authenticate(req, res, next) {
     }
 
     req.user = user;
+    req.userId = user._id;
     req.session = activeSession;
     next();
   } catch (error) {
