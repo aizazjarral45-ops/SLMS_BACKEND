@@ -34,8 +34,8 @@ The app expects the following variables in `.env`:
 - `REFRESH_TOKEN_EXPIRES`
 - `CLIENT_URL`
 - `ADMIN_URL`
-- `API_KEY`
-- `AI_MODEL`
+- `GEMINI_API_KEY` (or legacy `API_KEY`)
+- `GEMINI_MODEL` (or legacy `AI_MODEL`, defaults to `gemini-3.6-flash`)
 
 ## Main API Modules
 

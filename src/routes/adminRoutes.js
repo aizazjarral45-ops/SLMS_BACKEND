@@ -1,6 +1,6 @@
 const express = require('express');
 const { getDashboard, listRoles, listPermissions, getAuditLogs, getUsersForAdmin } = require('../controllers/adminController');
-const { getWorkspace, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity } = require('../controllers/workspaceController');
+const { getWorkspace, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity, createEntity } = require('../controllers/workspaceController');
 const { authorize } = require('../middleware/authorize');
 
 const router = express.Router();
@@ -11,6 +11,7 @@ router.put('/workspace/:scope/:id', (req, _res, next) => { req.body.record = { .
 router.delete('/workspace/:scope/:id', deleteGenericRecord);
 router.patch('/entities/:entity/:id', updateEntity);
 router.delete('/entities/:entity/:id', deleteEntity);
+router.post('/entities/:entity', createEntity);
 router.get('/users', getUsersForAdmin);
 router.get('/roles', listRoles);
 router.get('/permissions', listPermissions);

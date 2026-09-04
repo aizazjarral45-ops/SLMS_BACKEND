@@ -5,27 +5,49 @@ const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 const { createNotification } = require('../services/notificationService');
 const { recordStatusChange } = require('../services/statusService');
+const { isValidObjectId } = require('../utils/objectId');
+
+const studentInformationFields = ['fullName', 'studentId', 'email', 'phone', 'program', 'semester', 'gender'];
+const guardianInformationFields = ['guardianName', 'guardianPhone', 'emergencyName', 'emergencyPhone'];
+
+const pickFields = (source, fields) => fields.reduce((result, field) => {
+  if (source[field] !== undefined) result[field] = source[field];
+  return result;
+}, {});
+
+const structuredApplicationData = (details) => ({
+  studentInformation: pickFields(details, studentInformationFields),
+  guardianInformation: pickFields(details, guardianInformationFields),
+});
 
 const submitHostelApplication = asyncHandler(async (req, res) => {
   const applicantDetails = req.body?.applicantDetails || req.body;
   if (!applicantDetails || typeof applicantDetails !== 'object' || Array.isArray(applicantDetails)) {
     return errorResponse(res, 'Applicant details are required', null, 400);
   }
+  const existingApplication = await HostelApplication.findOne({ studentId: req.user._id }).select('_id');
+  if (existingApplication) {
+    return errorResponse(res, 'A hostel application already exists. Edit the existing application instead.', null, 409);
+  }
 
   const application = await HostelApplication.create({
     studentId: req.user._id,
     applicantDetails,
+    ...structuredApplicationData(applicantDetails),
     status: 'Pending',
   });
 
   await createNotification({
+    userId: req.user._id,
     sourceUserId: req.user._id,
-    title: 'New hostel application',
-    message: `${req.user.name} submitted a hostel application for review.`,
+    title: 'Hostel Application Submitted',
+    message: 'Your hostel application has been submitted for review.',
     type: 'hostel',
     module: 'hostel',
     relatedModel: 'HostelApplication',
     relatedId: application._id,
+    navigationTarget: '/hostel',
+    dedupeKey: `hostel:${application._id}:submitted`,
     notifyAdmins: true,
   });
 
@@ -39,6 +61,7 @@ const updateHostelApplication = asyncHandler(async (req, res) => {
   if (!applicationId) {
     return errorResponse(res, 'Hostel application id is required', null, 400);
   }
+  if (!isValidObjectId(applicationId)) return errorResponse(res, 'Hostel application not found', null, 404);
 
   const application = await HostelApplication.findOne({
     _id: applicationId,
@@ -50,11 +73,17 @@ const updateHostelApplication = asyncHandler(async (req, res) => {
   }
 
   if (applicantDetails && typeof applicantDetails === 'object' && !Array.isArray(applicantDetails)) {
-    application.applicantDetails = { ...applicantDetails };
+    application.applicantDetails = {
+      ...(application.applicantDetails || {}),
+      ...applicantDetails,
+    };
+    Object.assign(application, structuredApplicationData(application.applicantDetails));
     application.markModified('applicantDetails');
+    application.markModified('studentInformation');
+    application.markModified('guardianInformation');
   }
 
-  if (status && ['Pending', 'Approved', 'Rejected'].includes(status) && req.user.role === 'admin') {
+  if (status && ['Pending', 'Approved', 'Rejected'].includes(status) && ['admin', 'super_admin'].includes(req.user.role)) {
     application.status = status;
   } else if (!status || req.user.role === 'student') {
     application.status = application.status === 'Approved' || application.status === 'Rejected'
@@ -106,6 +135,7 @@ const updateHostelApplicationStatus = asyncHandler(async (req, res) => {
   if (status === 'Approved' && (!String(roomNumber || '').trim() || !String(block || '').trim() || !String(floor || '').trim())) {
     return errorResponse(res, 'Room number, block and floor are required for approval', null, 400);
   }
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, 'Hostel application not found', null, 404);
 
   const application = await HostelApplication.findById(req.params.id);
   if (!application) return errorResponse(res, 'Hostel application not found', null, 404);
@@ -127,6 +157,8 @@ const updateHostelApplicationStatus = asyncHandler(async (req, res) => {
     module: 'hostel',
     relatedModel: 'HostelApplication',
     relatedId: application._id,
+    navigationTarget: '/hostel',
+    dedupeKey: `hostel:${application._id}:${status}`,
   });
 
   return successResponse(res, 'Hostel application status updated', { application }, 200);
@@ -155,6 +187,7 @@ const createHostelRecord = asyncHandler(async (req, res) => {
   return successResponse(res, 'Hostel record created', { record }, 201);
 });
 const updateHostelRecord = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, 'Hostel record not found', null, 404);
   const record = await Hostel.findById(req.params.id);
   if (!record) return errorResponse(res, 'Hostel record not found', null, 404);
   if (req.user.role === 'student' && String(record.userId) !== String(req.user._id)) return errorResponse(res, 'Forbidden', null, 403);
@@ -168,6 +201,7 @@ const updateHostelRecord = asyncHandler(async (req, res) => {
   return successResponse(res, 'Hostel record updated', { record }, 200);
 });
 const deleteHostelRecord = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, 'Hostel record not found', null, 404);
   const record = await Hostel.findById(req.params.id);
   if (!record) return errorResponse(res, 'Hostel record not found', null, 404);
   if (req.user.role === 'student' && String(record.userId) !== String(req.user._id)) return errorResponse(res, 'Forbidden', null, 403);
@@ -178,6 +212,7 @@ const deleteHostelRecord = asyncHandler(async (req, res) => {
   if (req.user.role !== 'student') await createNotification({ userId: record.userId, sourceUserId: req.user._id, title: 'Hostel application removed', message: 'An administrator removed your hostel application.', type: 'hostel', module: 'hostel' });
   return successResponse(res, 'Hostel record deleted', {}, 200);
 });
+
 module.exports = {
   listHostelRecords,
   createHostelRecord,

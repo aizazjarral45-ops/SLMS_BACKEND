@@ -52,20 +52,34 @@ async function logAuthEvent({ req, userId, email, eventType, status, sessionId, 
 
 async function createLoginNotification(userId, req) {
   try {
-    const timestamp = new Date().toLocaleString();
     await createNotification({
       userId,
       sourceUserId: userId,
-      title: 'New login detected.',
-      message: `A new login was detected for your account at ${timestamp}.`,
+      title: 'Login successful',
+      message: `A successful login was detected from ${getRequestMeta(req).ipAddress || 'your device'}.`,
       type: 'security',
       module: 'auth',
       relatedModel: 'User',
       relatedId: userId,
+      priority: 'normal',
     });
   } catch (error) {
     console.warn('Login notification failed:', error.message || error);
   }
+}
+
+async function createSignupNotification(userId) {
+  await createNotification({
+    userId,
+    sourceUserId: userId,
+    title: 'Signup successful',
+    message: 'Your SLMS account was created successfully.',
+    type: 'security',
+    module: 'auth',
+    relatedModel: 'User',
+    relatedId: userId,
+    dedupeKey: `signup:${userId}`,
+  });
 }
 
 function issueTokens(user, sessionId) {
@@ -124,6 +138,7 @@ const register = asyncHandler(async (req, res) => {
     status: 'SIGN_UP',
     metadata: { createdVia: 'register' },
   });
+  await createSignupNotification(user._id);
 
   const safeUser = user.toObject();
   delete safeUser.passwordHash;

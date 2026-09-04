@@ -3,6 +3,7 @@ const { successResponse, errorResponse } = require("../utils/apiResponse");
 const asyncHandler = require("../utils/asyncHandler");
 const { createNotification } = require("../services/notificationService");
 const { recordStatusChange } = require("../services/statusService");
+const { isValidObjectId } = require("../utils/objectId");
 const fields = [
   "title",
   "category",
@@ -61,6 +62,7 @@ const createExpense = asyncHandler(async (req, res) => {
   return successResponse(res, "Expense created", { expense }, 201);
 });
 const updateExpense = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, "Expense not found", null, 404);
   const expense = await Expense.findById(req.params.id);
   if (!expense) return errorResponse(res, "Expense not found", null, 404);
   if (
@@ -108,6 +110,7 @@ const updateExpense = asyncHandler(async (req, res) => {
   return successResponse(res, "Expense updated", { expense }, 200);
 });
 const deleteExpense = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, "Expense not found", null, 404);
   const expense = await Expense.findById(req.params.id);
   if (!expense) return errorResponse(res, "Expense not found", null, 404);
   if (

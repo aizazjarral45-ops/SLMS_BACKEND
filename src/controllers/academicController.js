@@ -179,7 +179,7 @@ const attendance = makeCrud(
   ["course", "attended", "total"],
   "Attendance",
   ["course", "attended", "total"],
-  "Attendance record",
+  "Attendance",
 );
 
 const getAcademicRecord = asyncHandler(async (req, res) => {

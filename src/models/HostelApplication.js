@@ -9,6 +9,9 @@ const hostelApplicationSchema = new mongoose.Schema(
       index: true,
     },
     applicantDetails: { type: mongoose.Schema.Types.Mixed, required: true },
+    studentInformation: { type: mongoose.Schema.Types.Mixed, default: {} },
+    guardianInformation: { type: mongoose.Schema.Types.Mixed, default: {} },
+    fees: { type: mongoose.Schema.Types.Mixed, default: {} },
     status: {
       type: String,
       enum: ["Pending", "Approved", "Rejected"],

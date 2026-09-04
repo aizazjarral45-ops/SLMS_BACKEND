@@ -1,11 +1,27 @@
 const AIConversation = require('../models/AIConversation');
 const { GoogleGenAI } = require('@google/genai');
 
-const getGeminiClient = () => {
-  const apiKey = process.env.API_KEY;
+const getGeminiConfig = () => {
+  const apiKey = (process.env.GEMINI_API_KEY || process.env.API_KEY || '').trim();
+  const configuredModel = (process.env.GEMINI_MODEL || process.env.AI_MODEL || 'gemini-3.6-flash').trim();
+  const model = configuredModel === 'gemini-2.0-flash'
+    ? 'gemini-3.6-flash'
+    : configuredModel;
   if (!apiKey) {
-    throw new Error('Gemini is not configured. Set API_KEY in the backend environment.');
+    const error = new Error('Gemini is not configured. Set GEMINI_API_KEY in the backend environment.');
+    error.code = 'GEMINI_NOT_CONFIGURED';
+    throw error;
   }
+  if (!model) {
+    const error = new Error('Gemini is not configured. Set GEMINI_MODEL in the backend environment.');
+    error.code = 'GEMINI_NOT_CONFIGURED';
+    throw error;
+  }
+  return { apiKey, model };
+};
+
+const getGeminiClient = () => {
+  const { apiKey } = getGeminiConfig();
   return new GoogleGenAI({ apiKey });
 };
 
@@ -14,17 +30,14 @@ async function createChatConversation(userId, title = 'New conversation') {
     userId,
     title,
     provider: 'gemini',
-    model: process.env.AI_MODEL?.trim() || 'gemini-3.5-flash-lite',
+    model: getGeminiConfig().model,
     messages: [],
   });
 }
 
 async function generateAIReply(conversation) {
   const ai = getGeminiClient();
-  const model = process.env.AI_MODEL?.trim();
-  if (!model) {
-    throw new Error('Gemini is not configured. Set AI_MODEL in the backend environment.');
-  }
+  const { model } = getGeminiConfig();
 
   if (conversation.model !== model) {
     conversation.model = model;
@@ -35,11 +48,19 @@ async function generateAIReply(conversation) {
     role: message.role === 'assistant' ? 'model' : message.role,
     parts: [{ text: message.content }],
   }));
-  const response = await ai.models.generateContent({
-    model,
-    contents,
-  });
-  const reply = response.text?.trim();
+  let response;
+  try {
+    response = await ai.models.generateContent({ model, contents });
+  } catch (error) {
+    const providerError = new Error('Gemini request failed.');
+    providerError.code = 'GEMINI_REQUEST_FAILED';
+    providerError.cause = error;
+    throw providerError;
+  }
+  const responseText = typeof response.text === 'string'
+    ? response.text
+    : typeof response.text === 'function' ? response.text() : '';
+  const reply = responseText.trim();
   if (!reply) throw new Error('Gemini returned an empty response.');
   return reply;
 }

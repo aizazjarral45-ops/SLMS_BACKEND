@@ -4,6 +4,7 @@ const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 const { recordStatusChange } = require('../services/statusService');
 const { createNotification } = require('../services/notificationService');
+const { isValidObjectId } = require('../utils/objectId');
 
 const listComplaints = asyncHandler(async (req, res) => {
   const filter = req.user.role === 'student' ? { userId: req.user._id } : {};
@@ -17,6 +18,7 @@ const createComplaint = asyncHandler(async (req, res) => {
   return successResponse(res, 'Complaint created', { complaint }, 201);
 });
 const updateComplaintStatus = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, 'Complaint not found', null, 404);
   const complaint = await Complaint.findById(req.params.id);
   if (!complaint) return errorResponse(res, 'Complaint not found', null, 404);
   const previousStatus = complaint.status;
@@ -25,10 +27,24 @@ const updateComplaintStatus = asyncHandler(async (req, res) => {
   if (req.body.comment) complaint.adminNotes.push(req.body.comment);
   await complaint.save();
   await recordStatusChange({ entityType: 'Complaint', entityId: complaint._id, previousStatus, newStatus: complaint.status, changedBy: req.user._id, changedByRole: req.user.role, reason: req.body.reason || 'Status updated', comment: req.body.comment || req.body.resolution || '' });
-  await createNotification({ userId: complaint.userId, sourceUserId: req.user._id, title: 'Complaint updated', message: `Your complaint status changed from ${previousStatus} to ${complaint.status}.`, type: 'complaint', module: 'complaints', relatedModel: 'Complaint', relatedId: complaint._id });
+  if (previousStatus !== complaint.status) {
+    await createNotification({
+      userId: complaint.userId,
+      sourceUserId: req.user._id,
+      title: `Complaint ${complaint.status}`,
+      message: `Your complaint status changed from ${previousStatus} to ${complaint.status}.`,
+      type: 'complaint',
+      module: 'complaints',
+      relatedModel: 'Complaint',
+      relatedId: complaint._id,
+      navigationTarget: '/complaints',
+      dedupeKey: `complaint:${complaint._id}:${complaint.status}`,
+    });
+  }
   return successResponse(res, 'Complaint status updated', { complaint }, 200);
 });
 const getComplaintStatusHistory = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, 'Complaint not found', null, 404);
   const complaint = await Complaint.findById(req.params.id).select('userId');
   if (!complaint) return errorResponse(res, 'Complaint not found', null, 404);
   if (req.user.role === 'student' && String(complaint.userId) !== String(req.user._id)) return errorResponse(res, 'Forbidden', null, 403);

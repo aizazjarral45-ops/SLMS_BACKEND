@@ -1,11 +1,11 @@
 const AIConversation = require("../models/AIConversation");
-const mongoose = require("mongoose");
 const {
   createChatConversation,
   generateAIReply,
 } = require("../services/aiService");
 const { successResponse, errorResponse } = require("../utils/apiResponse");
 const asyncHandler = require("../utils/asyncHandler");
+const { isValidObjectId } = require("../utils/objectId");
 
 const listConversations = asyncHandler(async (req, res) => {
   const conversations = await AIConversation.find({
@@ -23,6 +23,8 @@ const createConversation = asyncHandler(async (req, res) => {
 });
 
 const getConversation = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id))
+    return errorResponse(res, "Conversation not found", null, 404);
   const conversation = await AIConversation.findOne({
     _id: req.params.id,
     userId: req.user._id,
@@ -33,6 +35,8 @@ const getConversation = asyncHandler(async (req, res) => {
 });
 
 const sendMessage = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id))
+    return errorResponse(res, "Conversation not found", null, 404);
   const conversation = await AIConversation.findOne({
     _id: req.params.id,
     userId: req.user._id,
@@ -50,8 +54,11 @@ const sendMessage = asyncHandler(async (req, res) => {
   try {
     replyText = await generateAIReply(conversation);
   } catch (error) {
+    conversation.messages.pop();
+    await conversation.save();
     console.error("Failed to generate AI reply:", error);
-    return errorResponse(res, "Failed to generate AI reply", null, 500);
+    const status = error.code === "GEMINI_NOT_CONFIGURED" ? 503 : 502;
+    return errorResponse(res, status === 503 ? "AI provider is not configured" : "AI provider request failed", null, status);
   }
   const assistantMessage = { role: "assistant", content: replyText };
   conversation.messages.push(assistantMessage);
@@ -71,19 +78,26 @@ const clearHistory = asyncHandler(async (req, res) => {
 });
 
 const deleteHistoryItem = asyncHandler(async (req, res) => {
-  if (!mongoose.isValidObjectId(req.params.id)) {
+  if (!isValidObjectId(req.params.id)) {
     return errorResponse(res, "Conversation not found", null, 404);
   }
 
-  const result = await AIConversation.deleteOne({
+  const conversation = await AIConversation.findOne({
     _id: req.params.id,
     userId: req.user._id,
   });
-  if (!result.deletedCount) {
+  if (!conversation) {
     return errorResponse(res, "Conversation not found", null, 404);
   }
 
-  return successResponse(res, "AI conversation deleted", null, 200);
+  // "Undo" removes one complete user/assistant turn, while clear-all remains
+  // the explicit operation that deletes every conversation.
+  if (conversation.messages.length) {
+    conversation.messages.pop();
+    if (conversation.messages.at(-1)?.role === "user") conversation.messages.pop();
+    await conversation.save();
+  }
+  return successResponse(res, "Last AI prompt undone", { conversation }, 200);
 });
 
 module.exports = {

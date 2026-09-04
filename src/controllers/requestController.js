@@ -4,6 +4,7 @@ const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 const { recordStatusChange } = require('../services/statusService');
 const { createNotification } = require('../services/notificationService');
+const { isValidObjectId } = require('../utils/objectId');
 
 const listRequests = asyncHandler(async (req, res) => {
   const filter = req.user.role === 'student' ? { userId: req.user._id } : {};
@@ -39,6 +40,7 @@ const createRequest = asyncHandler(async (req, res) => {
 });
 
 const updateRequestStatus = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, 'Request not found', null, 404);
   const item = await Request.findById(req.params.id);
   if (!item) return errorResponse(res, 'Request not found', null, 404);
 
@@ -71,6 +73,7 @@ const updateRequestStatus = asyncHandler(async (req, res) => {
 });
 
 const getRequestStatusHistory = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, 'Request not found', null, 404);
   const item = await Request.findById(req.params.id).select('userId');
   if (!item) return errorResponse(res, 'Request not found', null, 404);
   if (req.user.role === 'student' && String(item.userId) !== String(req.user._id)) {

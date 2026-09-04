@@ -3,6 +3,7 @@ const StudentProfile = require('../models/StudentProfile');
 const Notification = require('../models/Notification');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
+const { isValidObjectId } = require('../utils/objectId');
 
 const getProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id).select('-passwordHash');
@@ -70,6 +71,7 @@ const listUsers = asyncHandler(async (req, res) => {
 
 const deleteUser = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  if (!isValidObjectId(id)) return errorResponse(res, 'User not found', null, 404);
   if (id === req.user._id.toString()) {
     return errorResponse(res, 'You cannot delete your own account here', null, 400);
   }

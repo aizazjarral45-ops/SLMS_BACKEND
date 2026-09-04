@@ -7,14 +7,6 @@ const { initSocket } = require('./config/socket');
 
 const port = Number(process.env.PORT) || 5000;
 
-if (!process.env.API_KEY) {
-  throw new Error('Gemini is not configured. Set API_KEY in Backend/.env.');
-}
-
-if (!process.env.AI_MODEL) {
-  throw new Error('Gemini is not configured. Set AI_MODEL in Backend/.env.');
-}
-
 async function startServer() {
   await connectDatabase();
   const server = http.createServer(app);

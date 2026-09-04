@@ -13,7 +13,15 @@ const notificationSchema = new mongoose.Schema({
   read: { type: Boolean, default: false },
   relatedModel: { type: String, default: '' },
   relatedId: { type: mongoose.Schema.Types.ObjectId, refPath: 'relatedModel', default: null },
-  createdAt: { type: Date, default: Date.now },
+  navigationTarget: { type: String, default: '' },
+  priority: { type: String, default: 'normal' },
+  dedupeKey: { type: String, default: null },
+  readAt: { type: Date, default: null },
 }, { timestamps: true });
+
+notificationSchema.index(
+  { recipientId: 1, dedupeKey: 1 },
+  { unique: true, partialFilterExpression: { dedupeKey: { $type: 'string' } } },
+);
 
 module.exports = mongoose.model('Notification', notificationSchema);

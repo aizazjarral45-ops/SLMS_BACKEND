@@ -13,6 +13,7 @@ const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 const { createNotification } = require('../services/notificationService');
 const { recordStatusChange } = require('../services/statusService');
+const { isValidObjectId } = require('../utils/objectId');
 
 const GENERIC_SCOPES = new Set(['rooms', 'allocations', 'categories', 'reminders', 'settings', 'courses', 'exams', 'attendance', 'results']);
 const ENTITY_MODELS = { complaints: Complaint, expenses: Expense, hostel: Hostel, assignments: Assignment, fees: Fee };
@@ -33,7 +34,10 @@ const cleanRecord = (document) => {
 
 async function resolveTargetUser(value) {
   if (!value) return null;
-  if (/^[a-f\d]{24}$/i.test(String(value))) return value;
+  if (isValidObjectId(String(value))) {
+    const exists = await User.exists({ _id: value });
+    return exists ? value : null;
+  }
   const profile = await StudentProfile.findOne({ studentId: String(value) }).select('userId').lean();
   return profile?.userId || null;
 }
@@ -59,7 +63,15 @@ const getWorkspace = asyncHandler(async (_req, res) => {
   });
   const mapOwned = (items) => items.map((item) => ({ ...cleanRecord(item), userId: asId(item.userId), studentId: asId(item.userId) }));
   const generic = records.reduce((all, item) => {
-    const row = { ...(item.data || {}), id: item.recordId, key: item.recordId, targetUserId: asId(item.targetUserId) };
+    const mongoId = asId(item._id);
+    const row = {
+      ...(item.data || {}),
+      _id: mongoId,
+      id: mongoId,
+      key: mongoId,
+      recordId: item.recordId,
+      targetUserId: asId(item.targetUserId),
+    };
     (all[item.scope] ||= []).push(row);
     return all;
   }, {});
@@ -84,29 +96,87 @@ const saveGenericRecord = asyncHandler(async (req, res) => {
   const { scope } = req.params;
   const record = req.body.record || {};
   if (!GENERIC_SCOPES.has(scope) || !record.id) return errorResponse(res, 'A valid workspace record is required', null, 400);
-  const targetUserId = await resolveTargetUser(record.studentId || record.targetUserId);
-  const saved = await AdminRecord.findOneAndUpdate(
-    { scope, recordId: String(record.id) },
-    { $set: { data: record, targetUserId, createdBy: req.user._id } },
-    { upsert: true, new: true, runValidators: true },
-  );
+  const targetReference = record.studentId || record.targetUserId;
+  const targetUserId = await resolveTargetUser(targetReference);
+  if (targetReference && !targetUserId) {
+    return errorResponse(res, 'Target student account not found', null, 404);
+  }
+  if (scope === 'attendance' && targetUserId) {
+    const academic = await Academic.findOne({ userId: targetUserId });
+    if (!academic) return errorResponse(res, 'Academic record not found', null, 404);
+    const existing = academic.attendance.id(record.id);
+    if (existing) {
+      ['course', 'attended', 'total'].forEach((field) => {
+        if (record[field] !== undefined) existing[field] = record[field];
+      });
+    } else {
+      academic.attendance.push({
+        course: record.course,
+        attended: record.attended,
+        total: record.total,
+      });
+    }
+    await academic.save();
+    const saved = existing || academic.attendance[academic.attendance.length - 1];
+    return successResponse(res, 'Attendance record saved', {
+      record: { ...cleanRecord(saved), studentId: asId(targetUserId), userId: asId(targetUserId) },
+    }, 200);
+  }
+  const usesMongoId = isValidObjectId(String(record.id));
+  const lookup = usesMongoId
+    ? { _id: record.id, scope }
+    : { scope, recordId: String(record.id) };
+  const existing = await AdminRecord.findOne(lookup);
+  const data = { ...record };
+  delete data._id;
+  delete data.recordId;
+  delete data.key;
+  const saved = existing
+    ? await AdminRecord.findOneAndUpdate(
+      lookup,
+      { $set: { data, targetUserId, createdBy: req.user._id } },
+      { new: true, runValidators: true },
+    )
+    : await AdminRecord.create({
+      scope,
+      recordId: usesMongoId ? `legacy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : String(record.id),
+      data,
+      targetUserId,
+      createdBy: req.user._id,
+    });
   if (targetUserId && req.body.notify) {
     await createNotification({ userId: targetUserId, sourceUserId: req.user._id, title: req.body.title || 'SLMS record updated', message: req.body.message || 'An administrator updated a record related to your account.', type: scope, module: scope });
   }
-  return successResponse(res, 'Workspace record saved', { record: { ...(saved.data || {}), id: saved.recordId } }, 200);
+  return successResponse(res, 'Workspace record saved', {
+    record: { ...(saved.data || {}), _id: asId(saved._id), id: asId(saved._id), key: asId(saved._id), recordId: saved.recordId, targetUserId: asId(saved.targetUserId) },
+  }, 200);
 });
 
 const deleteGenericRecord = asyncHandler(async (req, res) => {
   const { scope, id } = req.params;
   if (!GENERIC_SCOPES.has(scope)) return errorResponse(res, 'Unsupported workspace record', null, 400);
-  await AdminRecord.deleteOne({ scope, recordId: id });
-  return successResponse(res, 'Workspace record deleted', {}, 200);
+  if (scope === 'attendance' && isValidObjectId(id)) {
+    const academic = await Academic.findOne({ 'attendance._id': id });
+    if (!academic) return errorResponse(res, 'Attendance record not found', null, 404);
+    const attendance = academic.attendance.id(id);
+    if (!attendance) return errorResponse(res, 'Attendance record not found', null, 404);
+    attendance.deleteOne();
+    await academic.save();
+    return successResponse(res, 'Attendance record deleted', { id }, 200);
+  }
+  const lookup = isValidObjectId(id)
+    ? { _id: id, scope }
+    : { scope, recordId: id };
+  const deleted = await AdminRecord.findOneAndDelete(lookup);
+  if (!deleted) return errorResponse(res, 'Workspace record not found', null, 404);
+  return successResponse(res, 'Workspace record deleted', { id: asId(deleted._id), recordId: deleted.recordId }, 200);
 });
 
 const updateEntity = asyncHandler(async (req, res) => {
   const { entity, id } = req.params;
   const Model = ENTITY_MODELS[entity];
   if (!Model) return errorResponse(res, 'Unsupported entity', null, 400);
+  if (!isValidObjectId(id)) return errorResponse(res, 'Record not found', null, 404);
   const item = await Model.findById(id);
   if (!item) return errorResponse(res, 'Record not found', null, 404);
   const previousStatus = item.status;
@@ -123,6 +193,7 @@ const deleteEntity = asyncHandler(async (req, res) => {
   const { entity, id } = req.params;
   const Model = ENTITY_MODELS[entity];
   if (!Model) return errorResponse(res, 'Unsupported entity', null, 400);
+  if (!isValidObjectId(id)) return errorResponse(res, 'Record not found', null, 404);
   const item = await Model.findById(id);
   if (!item) return errorResponse(res, 'Record not found', null, 404);
   await item.deleteOne();
@@ -130,4 +201,23 @@ const deleteEntity = asyncHandler(async (req, res) => {
   return successResponse(res, 'Record deleted', {}, 200);
 });
 
-module.exports = { getWorkspace, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity };
+const createEntity = asyncHandler(async (req, res) => {
+  const { entity } = req.params;
+  const Model = ENTITY_MODELS[entity];
+  if (!Model) return errorResponse(res, 'Unsupported entity', null, 400);
+  const input = req.body || {};
+  const targetUserId = await resolveTargetUser(input.studentId || input.userId || input.targetUserId);
+  if (!targetUserId) return errorResponse(res, 'A valid student is required', null, 400);
+  const data = {};
+  (ENTITY_FIELDS[entity] || []).forEach((field) => {
+    if (input[field] !== undefined) data[field] = input[field];
+  });
+  data.userId = targetUserId;
+  if (entity === 'complaints' && !String(data.description || '').trim()) {
+    return errorResponse(res, 'Complaint description is required', null, 400);
+  }
+  const item = await Model.create(data);
+  return successResponse(res, 'Record created', { record: cleanRecord(item) }, 201);
+});
+
+module.exports = { getWorkspace, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity, createEntity };

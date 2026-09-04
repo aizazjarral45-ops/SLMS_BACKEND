@@ -3,6 +3,7 @@ const { successResponse, errorResponse } = require("../utils/apiResponse");
 const asyncHandler = require("../utils/asyncHandler");
 const { createNotification } = require("../services/notificationService");
 const { recordStatusChange } = require("../services/statusService");
+const { isValidObjectId } = require("../utils/objectId");
 const fields = [
   "title",
   "course",
@@ -43,6 +44,7 @@ const createAssignment = asyncHandler(async (req, res) => {
   return successResponse(res, "Assignment created", { assignment }, 201);
 });
 const updateAssignment = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, "Assignment not found", null, 404);
   const item = await Assignment.findById(req.params.id);
   if (!item) return errorResponse(res, "Assignment not found", null, 404);
   if (
@@ -81,6 +83,7 @@ const updateAssignment = asyncHandler(async (req, res) => {
   return successResponse(res, "Assignment updated", { assignment: item }, 200);
 });
 const deleteAssignment = asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return errorResponse(res, "Assignment not found", null, 404);
   const item = await Assignment.findById(req.params.id);
   if (!item) return errorResponse(res, "Assignment not found", null, 404);
   if (
