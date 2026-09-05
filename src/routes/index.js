@@ -18,6 +18,7 @@ const aiRoutes = require('./aiRoutes');
 const messageRoutes = require('./messageRoutes');
 const commentRoutes = require('./commentRoutes');
 const statusHistoryRoutes = require('./statusHistoryRoutes');
+const settingsRoutes = require('./settingsRoutes');
 const applicationRoutes = require('./applicationRoutes');
 const authenticate = require('../middleware/auth');
 const { errorResponse } = require('../utils/apiResponse');
@@ -44,6 +45,7 @@ router.use('/messages', authenticate, messageRoutes);
 router.use('/comments', authenticate, commentRoutes);
 router.use('/status-history', authenticate, statusHistoryRoutes);
 router.use('/ai', authenticate, aiRoutes);
+router.use('/settings', authenticate, settingsRoutes);
 
 router.get('/health', (_req, res) => {
   res.json({ success: true, message: 'SLMS API is healthy', data: { status: 'ok' } });
@@ -54,4 +56,3 @@ router.use((_req, res) => {
 });
 
 module.exports = router;
-

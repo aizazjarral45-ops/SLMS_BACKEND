@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Reminder = require('../models/Reminder');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
+const { emitDataChange } = require('../config/socket');
 
 const editableFields = ['title', 'type', 'when', 'done'];
 
@@ -61,6 +62,7 @@ const createReminder = asyncHandler(async (req, res) => {
   const validationError = validatePayload(req.body);
   if (validationError) return errorResponse(res, validationError, null, 400);
   const reminder = await Reminder.create({ ...pickFields(req.body), userId: req.userId });
+  emitDataChange({ userId: reminder.userId, resource: 'reminders', action: 'created', record: serialize(reminder) });
   return successResponse(res, 'Reminder created', { reminder: serialize(reminder) }, 201);
 });
 
@@ -74,6 +76,7 @@ const updateReminder = asyncHandler(async (req, res) => {
     { new: true, runValidators: true },
   );
   if (!reminder) return errorResponse(res, 'Reminder not found', null, 404);
+  emitDataChange({ userId: reminder.userId, resource: 'reminders', action: 'updated', record: serialize(reminder) });
   return successResponse(res, 'Reminder updated', { reminder: serialize(reminder) }, 200);
 });
 
@@ -83,6 +86,7 @@ const toggleReminder = asyncHandler(async (req, res) => {
   if (!reminder) return errorResponse(res, 'Reminder not found', null, 404);
   reminder.done = !reminder.done;
   await reminder.save();
+  emitDataChange({ userId: reminder.userId, resource: 'reminders', action: 'updated', record: serialize(reminder) });
   return successResponse(res, 'Reminder status updated', { reminder: serialize(reminder) }, 200);
 });
 
@@ -90,6 +94,7 @@ const deleteReminder = asyncHandler(async (req, res) => {
   if (!isValidId(req.params.id)) return errorResponse(res, 'Invalid reminder id', null, 400);
   const reminder = await Reminder.findOneAndDelete({ _id: req.params.id, userId: req.userId });
   if (!reminder) return errorResponse(res, 'Reminder not found', null, 404);
+  emitDataChange({ userId: reminder.userId, resource: 'reminders', action: 'deleted', id: reminder._id });
   return successResponse(res, 'Reminder deleted', {}, 200);
 });
 

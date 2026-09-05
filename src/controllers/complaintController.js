@@ -5,6 +5,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { recordStatusChange } = require('../services/statusService');
 const { createNotification } = require('../services/notificationService');
 const { isValidObjectId } = require('../utils/objectId');
+const { emitDataChange } = require('../config/socket');
 
 const listComplaints = asyncHandler(async (req, res) => {
   const filter = req.user.role === 'student' ? { userId: req.user._id } : {};
@@ -14,7 +15,8 @@ const listComplaints = asyncHandler(async (req, res) => {
 const createComplaint = asyncHandler(async (req, res) => {
   if (!String(req.body.title || '').trim() || !String(req.body.description || '').trim()) return errorResponse(res, 'Complaint title and description are required', null, 400);
   const complaint = await Complaint.create({ userId: req.user._id, title: String(req.body.title).trim(), category: req.body.category || 'Other', priority: req.body.priority || 'Medium', description: String(req.body.description).trim(), department: `${req.body.category || 'General'} Department`, status: 'Submitted', resolution: 'Complaint logged and assigned for review.', date: new Date().toISOString().slice(0, 10), attachments: Array.isArray(req.body.attachments) ? req.body.attachments : [] });
-  await createNotification({ userId: req.user._id, sourceUserId: req.user._id, title: 'Complaint submitted', message: `Your complaint "${complaint.title}" has been received.`, type: 'complaint', module: 'complaints', relatedModel: 'Complaint', relatedId: complaint._id, notifyAdmins: true });
+  await createNotification({ userId: req.user._id, sourceUserId: req.user._id, title: 'Complaint submitted', message: 'Your complaint has been submitted.', type: 'complaint', module: 'complaints', relatedModel: 'Complaint', relatedId: complaint._id, navigationTarget: '/complaints', dedupeKey: `complaint:${complaint._id}:submitted`, notifyAdmins: true });
+  emitDataChange({ userId: complaint.userId, resource: 'complaints', action: 'created', record: complaint });
   return successResponse(res, 'Complaint created', { complaint }, 201);
 });
 const updateComplaintStatus = asyncHandler(async (req, res) => {
@@ -41,6 +43,7 @@ const updateComplaintStatus = asyncHandler(async (req, res) => {
       dedupeKey: `complaint:${complaint._id}:${complaint.status}`,
     });
   }
+  emitDataChange({ userId: complaint.userId, resource: 'complaints', action: 'updated', record: complaint });
   return successResponse(res, 'Complaint status updated', { complaint }, 200);
 });
 const getComplaintStatusHistory = asyncHandler(async (req, res) => {

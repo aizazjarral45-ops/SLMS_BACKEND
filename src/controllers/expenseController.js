@@ -1,9 +1,9 @@
 const Expense = require("../models/Expense");
 const { successResponse, errorResponse } = require("../utils/apiResponse");
 const asyncHandler = require("../utils/asyncHandler");
-const { createNotification } = require("../services/notificationService");
 const { recordStatusChange } = require("../services/statusService");
 const { isValidObjectId } = require("../utils/objectId");
+const { emitDataChange } = require("../config/socket");
 const fields = [
   "title",
   "category",
@@ -48,17 +48,7 @@ const createExpense = asyncHandler(async (req, res) => {
     receiptUrl: req.body.receiptUrl || "",
     status: "Pending",
   });
-  await createNotification({
-    userId: req.user._id,
-    sourceUserId: req.user._id,
-    title: "Expense submitted",
-    message: `Your expense "${expense.title}" has been submitted for review.`,
-    type: "expense",
-    module: "expenses",
-    relatedModel: "Expense",
-    relatedId: expense._id,
-    notifyAdmins: true,
-  });
+  emitDataChange({ userId: expense.userId, resource: "expenses", action: "created", record: expense });
   return successResponse(res, "Expense created", { expense }, 201);
 });
 const updateExpense = asyncHandler(async (req, res) => {
@@ -107,6 +97,7 @@ const updateExpense = asyncHandler(async (req, res) => {
       relatedId: expense._id,
     });
   }
+  emitDataChange({ userId: expense.userId, resource: "expenses", action: "updated", record: expense });
   return successResponse(res, "Expense updated", { expense }, 200);
 });
 const deleteExpense = asyncHandler(async (req, res) => {
@@ -119,6 +110,7 @@ const deleteExpense = asyncHandler(async (req, res) => {
   )
     return errorResponse(res, "Forbidden", null, 403);
   await expense.deleteOne();
+  emitDataChange({ userId: expense.userId, resource: "expenses", action: "deleted", id: expense._id });
   return successResponse(res, "Expense deleted", {}, 200);
 });
 module.exports = { listExpenses, createExpense, updateExpense, deleteExpense }

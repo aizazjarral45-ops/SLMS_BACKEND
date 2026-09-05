@@ -3,6 +3,7 @@ const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 const { isValidObjectId } = require('../utils/objectId');
 const { ensureDerivedNotifications } = require('../services/notificationService');
+const { emitToUser } = require('../config/socket');
 
 const ownerFilter = (userId) => ({
   $or: [{ recipientId: userId }, { recipientId: null, userId }],
@@ -34,6 +35,12 @@ const markAsRead = asyncHandler(async (req, res) => {
     { new: true },
   );
   if (!notification) return errorResponse(res, 'Notification not found', null, 404);
+  emitToUser(req.userId.toString(), 'notification:updated', {
+    ...notification.toObject(),
+    id: notification._id.toString(),
+    _id: notification._id.toString(),
+    read: true,
+  });
   return successResponse(res, 'Notification marked as read', { notification }, 200);
 });
 const markAllAsRead = asyncHandler(async (req, res) => {
@@ -41,6 +48,7 @@ const markAllAsRead = asyncHandler(async (req, res) => {
     { $and: [ownerFilter(req.userId), unreadFilter] },
     { $set: { read: true, isRead: true, readAt: new Date() } },
   );
+  emitToUser(req.userId.toString(), 'notifications:read-all', {});
   return successResponse(res, 'All notifications marked as read', {}, 200);
 });
 const markAsUnread = asyncHandler(async (req, res) => {
@@ -51,6 +59,12 @@ const markAsUnread = asyncHandler(async (req, res) => {
     { new: true },
   );
   if (!notification) return errorResponse(res, 'Notification not found', null, 404);
+  emitToUser(req.userId.toString(), 'notification:updated', {
+    ...notification.toObject(),
+    id: notification._id.toString(),
+    _id: notification._id.toString(),
+    read: false,
+  });
   return successResponse(res, 'Notification marked as unread', { notification }, 200);
 });
 const deleteNotification = asyncHandler(async (req, res) => {
@@ -59,6 +73,9 @@ const deleteNotification = asyncHandler(async (req, res) => {
   }
   const deleted = await Notification.findOneAndDelete({ _id: req.params.id, ...ownerFilter(req.userId) });
   if (!deleted) return errorResponse(res, 'Notification not found', null, 404);
+  emitToUser(req.userId.toString(), 'notification:deleted', {
+    id: deleted._id.toString(),
+  });
   return successResponse(res, 'Notification deleted', {}, 200);
 });
 module.exports = { getNotifications, getUnreadNotifications, unreadCount, markAsRead, markAsUnread, markAllAsRead, deleteNotification };

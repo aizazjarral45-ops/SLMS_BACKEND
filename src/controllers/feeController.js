@@ -3,6 +3,7 @@ const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 const { isValidObjectId } = require('../utils/objectId');
 const HostelApplication = require('../models/HostelApplication');
+const { emitDataChange } = require('../config/socket');
 
 const listFees = asyncHandler(async (req, res) => {
   const fees = await Fee.find({ userId: req.user._id }).sort({ createdAt: -1 });
@@ -25,6 +26,7 @@ const createFee = asyncHandler(async (req, res) => {
     invoiceNumber: req.body.invoiceNumber || '',
     paymentMethod: req.body.paymentMethod || 'Cash',
   });
+  emitDataChange({ userId: fee.userId, resource: 'fees', action: 'created', record: fee });
   return successResponse(res, 'Fee created', { fee }, 201);
 });
 
@@ -41,6 +43,7 @@ const updateFee = asyncHandler(async (req, res) => {
       : req.body[field];
   });
   await fee.save();
+  emitDataChange({ userId: fee.userId, resource: 'fees', action: 'updated', record: fee });
   return successResponse(res, 'Fee updated', { fee }, 200);
 });
 
@@ -54,6 +57,7 @@ const deleteFee = asyncHandler(async (req, res) => {
   }).select('_id');
   if (!application) return errorResponse(res, 'Fee ownership could not be verified', null, 403);
   await Fee.deleteOne({ _id: fee._id, userId: req.user._id });
+  emitDataChange({ userId: req.user._id, resource: 'fees', action: 'deleted', id: fee._id });
   return successResponse(res, 'Fee deleted', {}, 200);
 });
 

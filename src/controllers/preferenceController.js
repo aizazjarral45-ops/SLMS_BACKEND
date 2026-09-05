@@ -1,6 +1,8 @@
 const Preference = require('../models/Preference');
 const { successResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
+const { createNotification } = require('../services/notificationService');
+const { emitDataChange } = require('../config/socket');
 
 const getPreferences = asyncHandler(async (req, res) => {
   const preferences = await Preference.findOne({ userId: req.user._id }).lean();
@@ -18,6 +20,21 @@ const updatePreferences = asyncHandler(async (req, res) => {
     { $set: update, $setOnInsert: { userId: req.user._id } },
     { new: true, upsert: true, runValidators: true },
   );
+  if (req.body.monthlyBudget !== undefined) {
+    await createNotification({
+      userId: req.user._id,
+      sourceUserId: req.user._id,
+      title: 'Budget updated',
+      message: 'Your budget was updated.',
+      type: 'expense',
+      module: 'expenses',
+      navigationTarget: '/expense',
+      relatedModel: 'Preference',
+      relatedId: preferences._id,
+      dedupeKey: `budget:update:${preferences._id}:${preferences.updatedAt.getTime()}`,
+    });
+  }
+  emitDataChange({ userId: req.user._id, resource: 'preferences', action: 'updated', record: preferences });
   return successResponse(res, 'Preferences updated', { preferences }, 200);
 });
 

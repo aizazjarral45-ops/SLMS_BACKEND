@@ -14,7 +14,8 @@ const notificationSchema = new mongoose.Schema({
   relatedModel: { type: String, default: '' },
   relatedId: { type: mongoose.Schema.Types.ObjectId, refPath: 'relatedModel', default: null },
   navigationTarget: { type: String, default: '' },
-  priority: { type: String, default: 'normal' },
+  severity: { type: String, enum: ['low', 'normal', 'medium', 'warning', 'high', 'critical'], default: 'normal', index: true },
+  priority: { type: String, enum: ['low', 'normal', 'medium', 'warning', 'high', 'critical'], default: 'normal' },
   dedupeKey: { type: String, default: null },
   readAt: { type: Date, default: null },
 }, { timestamps: true });

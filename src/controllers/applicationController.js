@@ -3,6 +3,7 @@ const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 const { createNotification } = require('../services/notificationService');
 const { isValidObjectId } = require('../utils/objectId');
+const { emitDataChange } = require('../config/socket');
 
 const listApplications = asyncHandler(async (req, res) => {
   const filter = req.user.role === 'student' ? { userId: req.user._id } : {};
@@ -37,6 +38,7 @@ const createApplication = asyncHandler(async (req, res) => {
     dedupeKey: `application:${application._id}:submitted`,
     notifyAdmins: true,
   });
+  emitDataChange({ userId: application.userId, resource: 'hostel', action: 'created', record: application });
   return successResponse(res, 'Application created', { application }, 201);
 });
 
@@ -68,6 +70,7 @@ const updateApplication = asyncHandler(async (req, res) => {
       dedupeKey: `application:${application._id}:${application.status}`,
     });
   }
+  emitDataChange({ userId: application.userId, resource: 'hostel', action: 'updated', record: application });
   return successResponse(res, 'Application updated', { application }, 200);
 });
 

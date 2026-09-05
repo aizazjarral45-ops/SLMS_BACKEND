@@ -6,6 +6,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { createNotification } = require('../services/notificationService');
 const { recordStatusChange } = require('../services/statusService');
 const { isValidObjectId } = require('../utils/objectId');
+const { emitDataChange } = require('../config/socket');
 
 const studentInformationFields = ['fullName', 'studentId', 'email', 'phone', 'program', 'semester', 'gender'];
 const guardianInformationFields = ['guardianName', 'guardianPhone', 'emergencyName', 'emergencyPhone'];
@@ -41,7 +42,7 @@ const submitHostelApplication = asyncHandler(async (req, res) => {
     userId: req.user._id,
     sourceUserId: req.user._id,
     title: 'Hostel Application Submitted',
-    message: 'Your hostel application has been submitted for review.',
+    message: 'Your hostel application has been submitted.',
     type: 'hostel',
     module: 'hostel',
     relatedModel: 'HostelApplication',
@@ -50,6 +51,7 @@ const submitHostelApplication = asyncHandler(async (req, res) => {
     dedupeKey: `hostel:${application._id}:submitted`,
     notifyAdmins: true,
   });
+  emitDataChange({ userId: application.studentId, resource: 'hostel', action: 'created', record: application });
 
   return successResponse(res, 'Hostel application submitted', { application }, 201);
 });
@@ -109,6 +111,20 @@ const updateHostelApplication = asyncHandler(async (req, res) => {
   }
 
   await application.save();
+  await createNotification({
+    userId: application.studentId,
+    sourceUserId: req.user._id,
+    title: 'Hostel application updated',
+    message: `Your hostel application status is now ${application.status}.`,
+    type: 'hostel',
+    module: 'hostel',
+    relatedModel: 'HostelApplication',
+    relatedId: application._id,
+    navigationTarget: '/hostel',
+    dedupeKey: `hostel-application:${application._id}:${application.status}:${application.updatedAt.getTime()}`,
+    notifyAdmins: req.user.role === 'student',
+  });
+  emitDataChange({ userId: application.studentId, resource: 'hostel', action: 'updated', record: application });
 
   return successResponse(res, 'Hostel application updated', { application }, 200);
 });
@@ -160,6 +176,7 @@ const updateHostelApplicationStatus = asyncHandler(async (req, res) => {
     navigationTarget: '/hostel',
     dedupeKey: `hostel:${application._id}:${status}`,
   });
+  emitDataChange({ userId: application.studentId, resource: 'hostel', action: 'updated', record: application });
 
   return successResponse(res, 'Hostel application status updated', { application }, 200);
 });
@@ -183,7 +200,8 @@ const createHostelRecord = asyncHandler(async (req, res) => {
   copyFields(record, req.body, req.user.role === 'student' ? studentFields : adminFields);
   if (!record.status) record.status = 'Pending';
   await record.save();
-  await createNotification({ userId: ownerId, sourceUserId: req.user._id, title: req.user.role === 'student' ? 'Hostel application submitted' : 'Hostel application created', message: req.user.role === 'student' ? 'Your hostel application has been submitted for review.' : 'An administrator created a hostel application for you.', type: 'hostel', module: 'hostel', relatedModel: 'Hostel', relatedId: record._id, notifyAdmins: req.user.role === 'student' });
+  await createNotification({ userId: ownerId, sourceUserId: req.user._id, title: req.user.role === 'student' ? 'Hostel application submitted' : 'Hostel application created', message: req.user.role === 'student' ? 'Your hostel application has been submitted.' : 'An administrator created a hostel application for you.', type: 'hostel', module: 'hostel', relatedModel: 'Hostel', relatedId: record._id, dedupeKey: `hostel:${record._id}:submitted`, notifyAdmins: req.user.role === 'student' });
+  emitDataChange({ userId: ownerId, resource: 'hostel', action: 'created', record });
   return successResponse(res, 'Hostel record created', { record }, 201);
 });
 const updateHostelRecord = asyncHandler(async (req, res) => {
@@ -198,6 +216,7 @@ const updateHostelRecord = asyncHandler(async (req, res) => {
     if (previousStatus !== record.status) await recordStatusChange({ entityType: 'Hostel', entityId: record._id, previousStatus, newStatus: record.status, changedBy: req.user._id, changedByRole: req.user.role, reason: req.body.reason || 'Hostel application updated', comment: req.body.remarks || '' });
     await createNotification({ userId: record.userId, sourceUserId: req.user._id, title: 'Hostel application updated', message: `Your hostel application status is now ${record.status}.`, type: 'hostel', module: 'hostel', relatedModel: 'Hostel', relatedId: record._id });
   }
+  emitDataChange({ userId: record.userId, resource: 'hostel', action: 'updated', record });
   return successResponse(res, 'Hostel record updated', { record }, 200);
 });
 const deleteHostelRecord = asyncHandler(async (req, res) => {
@@ -210,6 +229,7 @@ const deleteHostelRecord = asyncHandler(async (req, res) => {
   }
   await record.deleteOne();
   if (req.user.role !== 'student') await createNotification({ userId: record.userId, sourceUserId: req.user._id, title: 'Hostel application removed', message: 'An administrator removed your hostel application.', type: 'hostel', module: 'hostel' });
+  emitDataChange({ userId: record.userId, resource: 'hostel', action: 'deleted', id: record._id });
   return successResponse(res, 'Hostel record deleted', {}, 200);
 });
 

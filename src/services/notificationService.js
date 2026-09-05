@@ -5,7 +5,12 @@ const Expense = require('../models/Expense');
 const Assignment = require('../models/Assignment');
 const Exam = require('../models/Exam');
 const Attendance = require('../models/Attendance');
-const { emitToUser } = require('../config/socket');
+const Hostel = require('../models/Hostel');
+const HostelApplication = require('../models/HostelApplication');
+const Fee = require('../models/Fee');
+const StudentProfile = require('../models/StudentProfile');
+const Reminder = require('../models/Reminder');
+const { emitToUser, emitDataChange } = require('../config/socket');
 
 async function createNotification({
   userId,
@@ -18,6 +23,7 @@ async function createNotification({
   relatedId = null,
   navigationTarget = '',
   priority = 'normal',
+  severity = priority,
   dedupeKey = null,
   notifyAdmins = false,
 }) {
@@ -42,6 +48,7 @@ async function createNotification({
   }
   const recipientIds = [...new Set(recipients.filter(Boolean).map((id) => id.toString()))];
   const notifications = [];
+  const createdNotifications = [];
   for (const recipientId of recipientIds) {
     const payload = {
       recipientId,
@@ -55,22 +62,27 @@ async function createNotification({
       relatedModel,
       relatedId,
       navigationTarget: inferredNavigationTarget,
-      priority,
+      priority: severity,
+      severity,
       isRead: false,
       read: false,
       ...(dedupeKey ? { dedupeKey } : {}),
     };
     if (!dedupeKey) {
-      notifications.push(await Notification.create(payload));
-      continue;
-    }
-    const existing = await Notification.findOne({ recipientId, dedupeKey });
-    if (existing) {
-      notifications.push(existing);
+      const notification = await Notification.create(payload);
+      notifications.push(notification);
+      createdNotifications.push(notification);
       continue;
     }
     try {
-      notifications.push(await Notification.create(payload));
+      const existing = await Notification.findOne({ recipientId, dedupeKey });
+      if (existing) {
+        notifications.push(existing);
+      } else {
+        const notification = await Notification.create(payload);
+        notifications.push(notification);
+        createdNotifications.push(notification);
+      }
     } catch (error) {
       if (error?.code !== 11000) throw error;
       const duplicate = await Notification.findOne({ recipientId, dedupeKey });
@@ -79,16 +91,22 @@ async function createNotification({
     }
   }
 
-  notifications.forEach((notification) => emitToUser(notification.recipientId.toString(), 'new-notification', {
-    id: notification._id.toString(),
-    title,
-    message,
-    type,
-    module,
-    navigationTarget: inferredNavigationTarget,
-    read: notification.isRead,
-    createdAt: notification.createdAt,
-  }));
+  createdNotifications.forEach((notification) => {
+    const payload = {
+      ...notification.toObject(),
+      id: notification._id.toString(),
+      _id: notification._id.toString(),
+      read: notification.isRead,
+    };
+    emitToUser(notification.recipientId.toString(), 'notification:created', payload);
+    emitDataChange({
+      userId: notification.recipientId,
+      resource: 'notifications',
+      action: 'created',
+      id: notification._id,
+      record: payload,
+    });
+  });
   return notifications[0] || null;
 }
 
@@ -100,34 +118,42 @@ const dateOnly = (value) => {
 async function ensureDerivedNotifications(userId) {
   const now = new Date();
   const period = now.toISOString().slice(0, 7);
-  const [preference, expenses, assignments, exams, attendance] = await Promise.all([
+  const [preference, expenses, assignments, exams, attendance, hostels, hostelApplications, fees, profile, reminders] = await Promise.all([
     Preference.findOne({ userId }).lean(),
-    Expense.find({ userId }).select('amount').lean(),
+    Expense.find({ userId }).select('amount date createdAt').lean(),
     Assignment.find({ userId }).select('title course dueDate status').lean(),
     Exam.find({ userId }).select('title course examDate').lean(),
     Attendance.find({ userId }).select('course attended total').lean(),
+    Hostel.find({ userId }).select('feesStatus paymentDueDate feesPaidThisMonth').lean(),
+    HostelApplication.find({ studentId: userId }).select('status createdAt updatedAt').lean(),
+    Fee.find({ userId }).select('feeType status dueDate amount paidAmount').lean(),
+    StudentProfile.findOne({ userId }).lean(),
+    Reminder.find({ userId, done: false }).select('title type when').lean(),
   ]);
 
   const budget = Number(preference?.monthlyBudget || 0);
-  const spent = expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const spent = expenses.reduce((sum, item) => {
+    const date = String(item.date || item.createdAt || '');
+    return date.slice(0, 7) === period ? sum + Number(item.amount || 0) : sum;
+  }, 0);
   if (budget > 0) {
     const remaining = budget - spent;
     const ratio = remaining / budget;
     const thresholds = ratio <= 0
       ? [['exhausted', 'Budget Exhausted']]
       : [
-          ...(ratio <= 0.3 ? [['low', 'Low Budget Warning']] : []),
+          ...(ratio <= 0.25 ? [['low', 'Low Budget Warning']] : []),
           ...(ratio <= 0.5 ? [['warning', 'Budget Warning']] : []),
         ];
     for (const [threshold, title] of thresholds) {
       await createNotification({
         userId,
         title,
-        message: `Your remaining monthly budget is ${remaining.toFixed(2)}.`,
+        message: `Your budget is ${Math.max(0, ratio * 100).toFixed(0)}% remaining.`,
         type: 'expense',
         module: 'expenses',
         navigationTarget: '/expense',
-        priority: threshold === 'exhausted' ? 'critical' : 'warning',
+        priority: threshold === 'warning' ? 'warning' : 'critical',
         dedupeKey: `budget:${period}:${threshold}`,
       });
     }
@@ -141,24 +167,23 @@ async function ensureDerivedNotifications(userId) {
   for (const assignment of assignments) {
     if (assignment.status === 'Completed') continue;
     const days = daysUntil(assignment.dueDate);
-    if (![3, 2, 1, 0, -1].includes(days)) continue;
-    const period = days < 0 ? 'overdue' : String(days);
-    const wording = days < 0 ? 'overdue' : days === 0 ? 'due today' : `due in ${days} days`;
+    if (![3, 1].includes(days)) continue;
+    const wording = `due in ${days} days`;
     await createNotification({
       userId,
-      title: days < 0 ? 'Assignment Overdue' : `Assignment Due in ${days} Days`,
+      title: `Assignment Due in ${days} Days`,
       message: `Your assignment "${assignment.title}" is ${wording}.`,
       type: 'assignment',
       module: 'assignments',
       relatedModel: 'Assignment',
       relatedId: assignment._id,
       navigationTarget: '/academic',
-      dedupeKey: `assignment:${assignment._id}:${period}`,
+      dedupeKey: `assignment:${assignment._id}:${days}`,
     });
   }
   for (const exam of exams) {
     const days = daysUntil(exam.examDate);
-    if (![7, 4, 3, 2, 1, 0].includes(days)) continue;
+    if (![7, 3, 2, 1].includes(days)) continue;
     await createNotification({
       userId,
       title: 'Exam Reminder',
@@ -175,19 +200,74 @@ async function ensureDerivedNotifications(userId) {
     const total = Number(item.total || 0);
     if (!total) continue;
     const percentage = (Number(item.attended || 0) / total) * 100;
-    if (percentage >= 75) continue;
     const critical = percentage < 50;
     await createNotification({
       userId,
       title: critical ? 'Attendance Critical' : 'Attendance Warning',
       message: critical
-        ? `Your attendance is ${percentage.toFixed(1)}%. You are at risk according to the existing attendance rule.`
-        : `Your attendance is ${percentage.toFixed(1)}%. Your attendance has fallen below the required 75%.`,
+        ? `Your attendance is ${percentage.toFixed(1)}%. You are at risk of dropout. Please maintain your attendance.`
+        : `Your attendance is ${percentage.toFixed(1)}%.`,
       type: 'attendance',
       module: 'academic',
       navigationTarget: '/academic',
       priority: critical ? 'critical' : 'warning',
       dedupeKey: `attendance:${item._id}:${critical ? 'critical' : 'warning'}`,
+    });
+  }
+
+  for (const application of hostelApplications) {
+    if (!application.updatedAt || !application.createdAt || new Date(application.updatedAt).getTime() <= new Date(application.createdAt).getTime()) continue;
+    await createNotification({
+    userId, title: 'Hostel application updated',
+    message: `Your hostel application status is now ${application.status}.`,
+    type: 'hostel', module: 'hostel', relatedModel: 'HostelApplication', relatedId: application._id,
+    navigationTarget: '/hostel', dedupeKey: `hostel-application:${application._id}:${application.status}:${new Date(application.updatedAt).getTime()}`,
+    });
+  }
+  for (const hostel of hostels) {
+    if (!hostel.feesStatus) continue;
+    await createNotification({
+    userId, title: `Hostel fee ${hostel.feesStatus.toLowerCase()}`,
+    message: `Your hostel fee status is ${hostel.feesStatus}.`,
+    type: 'fee', module: 'hostel', navigationTarget: '/hostel',
+    priority: hostel.feesStatus === 'Overdue' ? 'critical' : 'warning',
+    dedupeKey: `hostel-fee:${hostel._id}:${hostel.feesStatus}`,
+    });
+  }
+  for (const fee of fees) {
+    if (!fee.status) continue;
+    await createNotification({
+    userId, title: `Fee ${fee.status.toLowerCase()}`,
+    message: `Your ${fee.feeType} fee status is ${fee.status}.`,
+    type: 'fee', module: 'fees', navigationTarget: '/fees',
+    priority: fee.status === 'Overdue' ? 'critical' : fee.status === 'Paid' ? 'normal' : 'warning',
+    dedupeKey: `fee:${fee._id}:${fee.status}`,
+    });
+  }
+  if (profile) {
+    const required = ['fullName', 'studentId', 'universityEmail', 'phone', 'program', 'semester'];
+    const missing = required.filter((field) => !String(profile[field] || '').trim());
+    if (!missing.length) {
+      await createNotification({
+        userId,
+        title: 'Profile completed',
+        message: 'Congratulations! Your profile is completed.',
+        type: 'profile',
+        module: 'profile',
+        navigationTarget: '/profile',
+        dedupeKey: 'profile:completed',
+      });
+    }
+  }
+  for (const reminder of reminders) {
+    const days = daysUntil(reminder.when);
+    if (days === null || days > 1) continue;
+    await createNotification({
+    userId, title: days < 0 ? 'Reminder overdue' : 'Reminder due',
+    message: `Reminder: ${reminder.title}${days === 0 ? ' is due today.' : days < 0 ? ' is overdue.' : ` is due in ${days} day${days === 1 ? '' : 's'}.`}`,
+    type: 'reminder', module: 'reminders', navigationTarget: '/reminders',
+    priority: days < 0 ? 'critical' : days === 0 ? 'warning' : 'normal',
+    dedupeKey: `reminder:${reminder._id}:${days}`,
     });
   }
 }

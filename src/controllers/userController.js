@@ -20,6 +20,7 @@ const LoginHistory = require('../models/LoginHistory');
 const Message = require('../models/Message');
 const PasswordResetToken = require('../models/PasswordResetToken');
 const Preference = require('../models/Preference');
+const Settings = require('../models/Settings');
 const Reminder = require('../models/Reminder');
 const Request = require('../models/Request');
 const Session = require('../models/Session');
@@ -148,6 +149,7 @@ const deleteOwnAccount = asyncHandler(async (req, res) => {
     [Message, { $or: [{ senderId: userId }, { receiverId: userId }] }],
     [PasswordResetToken, { userId }],
     [Preference, { userId }],
+    [Settings, { userId }],
     [Reminder, { userId }],
     [Request, { userId }],
     [Session, { userId }],

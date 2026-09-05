@@ -1,9 +1,9 @@
 const Assignment = require("../models/Assignment");
 const { successResponse, errorResponse } = require("../utils/apiResponse");
 const asyncHandler = require("../utils/asyncHandler");
-const { createNotification } = require("../services/notificationService");
 const { recordStatusChange } = require("../services/statusService");
 const { isValidObjectId } = require("../utils/objectId");
+const { emitDataChange } = require("../config/socket");
 const fields = [
   "title",
   "course",
@@ -30,17 +30,7 @@ const createAssignment = asyncHandler(async (req, res) => {
     status: req.body.status || "To do",
     description: req.body.description || "",
   });
-  await createNotification({
-    userId: req.user._id,
-    sourceUserId: req.user._id,
-    title: "Assignment submitted",
-    message: `Your assignment "${assignment.title}" has been submitted.`,
-    type: "assignment",
-    module: "assignments",
-    relatedModel: "Assignment",
-    relatedId: assignment._id,
-    notifyAdmins: true,
-  });
+  emitDataChange({ userId: assignment.userId, resource: "academic", action: "created", record: assignment });
   return successResponse(res, "Assignment created", { assignment }, 201);
 });
 const updateAssignment = asyncHandler(async (req, res) => {
@@ -80,6 +70,7 @@ const updateAssignment = asyncHandler(async (req, res) => {
       relatedId: item._id,
     });
   }
+  emitDataChange({ userId: item.userId, resource: "academic", action: "updated", record: item });
   return successResponse(res, "Assignment updated", { assignment: item }, 200);
 });
 const deleteAssignment = asyncHandler(async (req, res) => {
@@ -92,6 +83,7 @@ const deleteAssignment = asyncHandler(async (req, res) => {
   )
     return errorResponse(res, "Forbidden", null, 403);
   await item.deleteOne();
+  emitDataChange({ userId: item.userId, resource: "academic", action: "deleted", id: item._id });
   return successResponse(res, "Assignment deleted", {}, 200);
 });
 module.exports = {

@@ -7,6 +7,8 @@ const Assignment = require("../models/Assignment");
 const StudentProfile = require("../models/StudentProfile");
 const { successResponse, errorResponse } = require("../utils/apiResponse");
 const asyncHandler = require("../utils/asyncHandler");
+const { createNotification } = require("../services/notificationService");
+const { emitDataChange } = require("../config/socket");
 
 const profileFields = [
   "studentId",
@@ -64,6 +66,29 @@ const updateProfile = asyncHandler(async (req, res) => {
     { $set: update, $setOnInsert: { userId: req.user._id } },
     { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
   );
+  const requiredProfileFields = [
+    "fullName",
+    "studentId",
+    "universityEmail",
+    "phone",
+    "program",
+    "semester",
+  ];
+  if (requiredProfileFields.every((field) => String(profile[field] || "").trim())) {
+    await createNotification({
+      userId: req.user._id,
+      sourceUserId: req.user._id,
+      title: "Profile completed",
+      message: "Congratulations! Your profile is completed.",
+      type: "profile",
+      module: "profile",
+      navigationTarget: "/profile",
+      relatedModel: "StudentProfile",
+      relatedId: profile._id,
+      dedupeKey: "profile:completed",
+    });
+  }
+  emitDataChange({ userId: req.user._id, resource: "profile", action: "updated", record: profile });
   return successResponse(res, "Student profile updated", { profile }, 200);
 });
 
@@ -91,6 +116,7 @@ const updateAcademicProfile = asyncHandler(async (req, res) => {
     { $set: update, $setOnInsert: { userId: req.user._id } },
     { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
   );
+  emitDataChange({ userId: req.user._id, resource: "academic", action: "updated", record: profile });
   return successResponse(res, "Academic profile saved", { profile }, 200);
 });
 
@@ -124,6 +150,7 @@ const makeCrud = (
       );
     }
     const record = await Model.create({ ...data, userId: req.user._id });
+    emitDataChange({ userId: req.user._id, resource: "academic", action: "created", record });
     return successResponse(
       res,
       `${singular} created`,
@@ -143,6 +170,7 @@ const makeCrud = (
       { new: true, runValidators: true },
     );
     if (!record) return errorResponse(res, `${singular} not found`, null, 404);
+    emitDataChange({ userId: req.user._id, resource: "academic", action: "updated", record });
     return successResponse(
       res,
       `${singular} updated`,
@@ -158,6 +186,7 @@ const makeCrud = (
       ...userFilter(req),
     });
     if (!record) return errorResponse(res, `${singular} not found`, null, 404);
+    emitDataChange({ userId: req.user._id, resource: "academic", action: "deleted", id: record._id });
     return successResponse(res, `${singular} deleted`, {}, 200);
   }),
 });
