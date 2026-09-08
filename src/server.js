@@ -4,11 +4,13 @@ const http = require('http');
 const app = require('./app');
 const connectDatabase = require('./config/db');
 const { initSocket } = require('./config/socket');
+const { ensureAdminAccount } = require('./services/adminService');
 
 const port = Number(process.env.PORT) || 5000;
 
 async function startServer() {
   await connectDatabase();
+  await ensureAdminAccount();
   const server = http.createServer(app);
   initSocket(server);
 

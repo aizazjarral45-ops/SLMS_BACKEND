@@ -1,5 +1,6 @@
 const express = require('express');
 const authRoutes = require('./authRoutes');
+const adminAuthRoutes = require('./adminAuthRoutes');
 const userRoutes = require('./userRoutes');
 const studentRoutes = require('./studentRoutes');
 const adminRoutes = require('./adminRoutes');
@@ -26,6 +27,7 @@ const { errorResponse } = require('../utils/apiResponse');
 const router = express.Router();
 
 router.use('/auth', authRoutes);
+router.use('/admin', adminAuthRoutes);
 router.use('/users', authenticate, userRoutes);
 router.use('/students', authenticate, studentRoutes);
 router.use('/admin', authenticate, adminRoutes);

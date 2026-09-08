@@ -6,6 +6,16 @@ const Hostel = require('../models/Hostel');
 const Assignment = require('../models/Assignment');
 const Academic = require('../models/Academic');
 const Fee = require('../models/Fee');
+const Course = require('../models/Course');
+const Exam = require('../models/Exam');
+const Attendance = require('../models/Attendance');
+const AcademicProfile = require('../models/AcademicProfile');
+const Request = require('../models/Request');
+const Application = require('../models/Application');
+const Notification = require('../models/Notification');
+const Reminder = require('../models/Reminder');
+const UploadedFile = require('../models/UploadedFile');
+const AIConversation = require('../models/AIConversation');
 const Role = require('../models/Role');
 const Permission = require('../models/Permission');
 const AdminRecord = require('../models/AdminRecord');
@@ -42,8 +52,71 @@ async function resolveTargetUser(value) {
   return profile?.userId || null;
 }
 
+const getAdminStudents = asyncHandler(async (_req, res) => {
+  const [users, profiles] = await Promise.all([
+    User.find({ role: 'student' }).select('-passwordHash').sort({ createdAt: -1 }).lean(),
+    StudentProfile.find({}).lean(),
+  ]);
+  const profilesByUserId = new Map(profiles.map((profile) => [asId(profile.userId), profile]));
+  const students = users.map((user) => {
+    const profile = profilesByUserId.get(asId(user._id)) || {};
+    return {
+      ...cleanRecord(profile),
+      _id: asId(user._id),
+      id: asId(user._id),
+      userId: asId(user._id),
+      studentId: profile.studentId || asId(user._id),
+      name: profile.fullName || user.name || '',
+      email: profile.universityEmail || profile.personalEmail || user.email || '',
+      status: user.status || 'Active',
+    };
+  });
+  return successResponse(res, 'Admin students', { students }, 200);
+});
+
+const getAdminStudent = asyncHandler(async (req, res) => {
+  const userId = await resolveTargetUser(req.params.studentId);
+  if (!userId) return errorResponse(res, 'Student not found', null, 404);
+  const user = await User.findOne({ _id: userId, role: 'student' }).select('-passwordHash').lean();
+  if (!user) return errorResponse(res, 'Student not found', null, 404);
+  const profile = await StudentProfile.findOne({ userId }).lean() || {};
+  const [complaints, expenses, hostels, assignments, academic, fees, courses, exams, attendance, academicProfiles, requests, applications, notifications, reminders, documents, conversations] = await Promise.all([
+    Complaint.find({ userId }).lean(), Expense.find({ userId }).lean(), Hostel.find({ userId }).lean(),
+    Assignment.find({ userId }).lean(), Academic.findOne({ userId }).lean(), Fee.find({ userId }).lean(),
+    Course.find({ userId }).lean(), Exam.find({ userId }).lean(), Attendance.find({ userId }).lean(),
+    AcademicProfile.find({ userId }).lean(), Request.find({ userId }).lean(), Application.find({ userId }).lean(),
+    Notification.find({ $or: [{ userId }, { recipientId: userId }] }).lean(), Reminder.find({ userId }).lean(),
+    UploadedFile.find({ userId }).lean(), AIConversation.find({ userId }).sort({ updatedAt: -1 }).lean(),
+  ]);
+  const student = {
+    ...cleanRecord(profile), _id: asId(user._id), id: asId(user._id), userId: asId(user._id),
+    studentId: profile.studentId || asId(user._id), name: profile.fullName || user.name || '',
+    email: profile.universityEmail || profile.personalEmail || user.email || '', status: user.status || 'Active',
+  };
+  const aiSearchHistory = conversations.flatMap((conversation) => (conversation.messages || [])
+    .filter((message) => message.role === 'user')
+    .map((message) => ({ id: asId(message._id), conversationId: asId(conversation._id), userId: asId(user._id), studentId: asId(user._id), query: message.content, createdAt: message.createdAt || conversation.createdAt, status: 'Completed', provider: conversation.provider, model: conversation.model })));
+  const academicRows = {
+    courses: courses.map(cleanRecord), exams: exams.map(cleanRecord), attendance: attendance.map(cleanRecord),
+    results: [], profiles: academicProfiles.map(cleanRecord), assignments: assignments.map(cleanRecord),
+  };
+  ['courses', 'exams', 'attendance', 'results'].forEach((kind) => {
+    (academic?.[kind] || []).forEach((row) => academicRows[kind].push({ ...cleanRecord(row), userId: asId(userId), studentId: asId(userId) }));
+  });
+  const owned = (rows) => rows.map((row) => ({ ...cleanRecord(row), userId: asId(userId), studentId: asId(userId) }));
+  return successResponse(res, 'Admin student workspace', {
+    student,
+    workspace: {
+      admin: { students: [student] }, complaints: owned(complaints), expenses: owned(expenses),
+      hostelApplications: owned(hostels), hostelFees: owned(fees), academic: academicRows,
+      requests: owned(requests), applications: owned(applications), notifications: owned(notifications),
+      reminders: owned(reminders), documents: owned(documents), aiSearchHistory,
+    },
+  }, 200);
+});
+
 const getWorkspace = asyncHandler(async (_req, res) => {
-  const [profiles, users, complaints, expenses, hostels, assignments, academic, fees, roles, permissions, records] = await Promise.all([
+  const [profiles, users, complaints, expenses, hostels, assignments, academic, fees, roles, permissions, records, courses, exams, attendance, academicProfiles, requests, applications, notifications, reminders, documents, conversations] = await Promise.all([
     StudentProfile.find({}).lean(),
     User.find({}).select('-passwordHash').lean(),
     Complaint.find({}).lean(),
@@ -55,13 +128,28 @@ const getWorkspace = asyncHandler(async (_req, res) => {
     Role.find({}).lean(),
     Permission.find({}).lean(),
     AdminRecord.find({}).lean(),
+    Course.find({}).lean(),
+    Exam.find({}).lean(),
+    Attendance.find({}).lean(),
+    AcademicProfile.find({}).lean(),
+    Request.find({}).lean(),
+    Application.find({}).lean(),
+    Notification.find({}).lean(),
+    Reminder.find({}).lean(),
+    UploadedFile.find({}).lean(),
+    AIConversation.find({}).sort({ updatedAt: -1 }).lean(),
   ]);
   const usersById = new Map(users.map((user) => [asId(user._id), user]));
-  const students = profiles.map((profile) => {
-    const user = usersById.get(asId(profile.userId)) || {};
-    return { ...cleanRecord(profile), id: asId(profile.userId), userId: asId(profile.userId), studentId: profile.studentId || asId(profile.userId), name: profile.fullName || user.name || '', email: profile.universityEmail || user.email || '', status: user.status || 'Active' };
+  const studentsByUserId = new Map(profiles.map((profile) => [asId(profile.userId), profile]));
+  const students = users.filter((user) => user.role === 'student').map((user) => {
+    const profile = studentsByUserId.get(asId(user._id)) || {};
+    return { ...cleanRecord(profile), id: asId(user._id), userId: asId(user._id), studentId: profile.studentId || asId(user._id), name: profile.fullName || user.name || '', email: profile.universityEmail || user.email || '', status: user.status || 'Active' };
   });
-  const mapOwned = (items) => items.map((item) => ({ ...cleanRecord(item), userId: asId(item.userId), studentId: asId(item.userId) }));
+
+  const mapOwned = (items) => items.map((item) => {
+    const ownerId = item.userId || item.recipientId || item.studentId;
+    return { ...cleanRecord(item), userId: asId(ownerId), studentId: asId(item.studentId || ownerId) };
+  });
   const generic = records.reduce((all, item) => {
     const mongoId = asId(item._id);
     const row = {
@@ -75,7 +163,32 @@ const getWorkspace = asyncHandler(async (_req, res) => {
     (all[item.scope] ||= []).push(row);
     return all;
   }, {});
-  const academicRows = { courses: [], exams: [], attendance: [], results: [] };
+  const academicRows = {
+    courses: courses.map((row) => ({ ...cleanRecord(row), userId: asId(row.userId), studentId: asId(row.userId) })),
+    exams: exams.map((row) => ({ ...cleanRecord(row), userId: asId(row.userId), studentId: asId(row.userId) })),
+    attendance: attendance.map((row) => ({ ...cleanRecord(row), userId: asId(row.userId), studentId: asId(row.userId) })),
+    results: [],
+    profiles: academicProfiles.map((profile) => ({
+      ...cleanRecord(profile),
+      userId: asId(profile.userId),
+      studentId: asId(profile.userId),
+    })),
+  };
+  const aiSearchHistory = conversations.flatMap((conversation) =>
+    (conversation.messages || [])
+      .filter((message) => message.role === 'user')
+      .map((message) => ({
+        id: asId(message._id),
+        conversationId: asId(conversation._id),
+        userId: asId(conversation.userId),
+        studentId: asId(conversation.userId),
+        query: message.content,
+        createdAt: message.createdAt || conversation.createdAt,
+        status: 'Completed',
+        provider: conversation.provider,
+        model: conversation.model,
+      })),
+  );
   academic.forEach((record) => {
     ['courses', 'exams', 'attendance', 'results'].forEach((kind) => {
       (record[kind] || []).forEach((row) => academicRows[kind].push({ ...row, id: asId(row._id), studentId: asId(record.userId), userId: asId(record.userId) }));
@@ -88,6 +201,12 @@ const getWorkspace = asyncHandler(async (_req, res) => {
     hostelApplications: mapOwned(hostels),
     hostelFees: mapOwned(fees),
     academic: { ...academicRows, assignments: mapOwned(assignments) },
+    requests: mapOwned(requests),
+    applications: mapOwned(applications),
+    notifications: mapOwned(notifications),
+    reminders: mapOwned(reminders),
+    documents: mapOwned(documents),
+    aiSearchHistory,
     settings: { reminders: generic.reminders || [], ...(generic.settings?.[0] || {}) },
   }, 200);
 });
@@ -220,4 +339,4 @@ const createEntity = asyncHandler(async (req, res) => {
   return successResponse(res, 'Record created', { record: cleanRecord(item) }, 201);
 });
 
-module.exports = { getWorkspace, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity, createEntity };
+module.exports = { getWorkspace, getAdminStudents, getAdminStudent, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity, createEntity };

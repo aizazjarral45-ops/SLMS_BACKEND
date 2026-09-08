@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Admin = require('../models/Admin');
 const Session = require('../models/Session');
 const { errorResponse } = require('../utils/apiResponse');
 
@@ -11,6 +12,27 @@ async function authenticate(req, res, next) {
     }
 
     const token = header.split(' ')[1];
+
+    // Admin JWTs use their own secret and Admin collection, while user JWTs
+    // continue through the existing access-token validation below.
+    if (process.env.JWT_SECRET) {
+      try {
+        const adminDecoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (adminDecoded.role === 'admin' && adminDecoded.id) {
+          const admin = await Admin.findById(adminDecoded.id).select('-password');
+          if (admin && admin.role === 'admin') {
+            req.user = admin;
+            req.userId = admin._id;
+            req.admin = admin;
+            req.session = null;
+            return next();
+          }
+        }
+      } catch (_adminError) {
+        // The token may be a normal user access token; validate it below.
+      }
+    }
+
     const secret = process.env.JWT_ACCESS_SECRET;
     if (!secret) {
       return errorResponse(res, 'Authentication is not configured', null, 500);

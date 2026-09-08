@@ -30,6 +30,10 @@ The app expects the following variables in `.env`:
 - `MONGODB_URI`
 - `JWT_ACCESS_SECRET`
 - `JWT_REFRESH_SECRET`
+- `JWT_SECRET` (admin authentication)
+- `ADMIN_EMAIL`
+- `ADMIN_PASSWORD`
+- `ADMIN_TOKEN_EXPIRES`
 - `ACCESS_TOKEN_EXPIRES`
 - `REFRESH_TOKEN_EXPIRES`
 - `CLIENT_URL`
