@@ -3,6 +3,7 @@ const StudentProfile = require('../models/StudentProfile');
 const Complaint = require('../models/Complaint');
 const Expense = require('../models/Expense');
 const Hostel = require('../models/Hostel');
+const HostelApplication = require('../models/HostelApplication');
 const Assignment = require('../models/Assignment');
 const Academic = require('../models/Academic');
 const Fee = require('../models/Fee');
@@ -16,6 +17,7 @@ const Notification = require('../models/Notification');
 const Reminder = require('../models/Reminder');
 const UploadedFile = require('../models/UploadedFile');
 const AIConversation = require('../models/AIConversation');
+const Preference = require('../models/Preference');
 const Role = require('../models/Role');
 const Permission = require('../models/Permission');
 const AdminRecord = require('../models/AdminRecord');
@@ -35,12 +37,31 @@ const ENTITY_FIELDS = {
   fees: ['feeType', 'amount', 'dueDate', 'paidAmount', 'status', 'invoiceNumber', 'paymentMethod'],
 };
 
-const asId = (value) => value && value.toString();
+const asId = (value) => {
+  if (!value) return value;
+  return value._id ? value._id.toString() : value.toString();
+};
+const profileForReference = (reference, profilesByUserId, profiles) => {
+  if (!reference) return {};
+  const value = asId(reference);
+  return profilesByUserId.get(value) ||
+    profiles.find((profile) =>
+      [profile.studentId, profile.rollNo].filter(Boolean).map(String).includes(value),
+    ) || {};
+};
 const cleanRecord = (document) => {
   const value = document && typeof document.toObject === 'function' ? document.toObject() : document;
   if (!value) return value;
   return { ...value, id: asId(value._id || value.id), key: asId(value._id || value.id) };
 };
+const applicationStudentDetails = (application) => ({
+  name: application?.studentInformation?.fullName ||
+    application?.applicantDetails?.fullName ||
+    application?.applicantDetails?.name || '',
+  rollNo: application?.studentInformation?.studentId ||
+    application?.applicantDetails?.studentId ||
+    application?.applicantDetails?.rollNumber || '',
+});
 
 async function resolveTargetUser(value) {
   if (!value) return null;
@@ -48,7 +69,9 @@ async function resolveTargetUser(value) {
     const exists = await User.exists({ _id: value });
     return exists ? value : null;
   }
-  const profile = await StudentProfile.findOne({ studentId: String(value) }).select('userId').lean();
+  const profile = await StudentProfile.findOne({
+    $or: [{ studentId: String(value) }, { rollNo: String(value) }],
+  }).select('userId').lean();
   return profile?.userId || null;
 }
 
@@ -65,7 +88,9 @@ const getAdminStudents = asyncHandler(async (_req, res) => {
       _id: asId(user._id),
       id: asId(user._id),
       userId: asId(user._id),
-      studentId: profile.studentId || asId(user._id),
+      studentId: profile.studentId || '',
+      rollNo: profile.rollNo || '',
+      studentName: profile.fullName || user.name || '',
       name: profile.fullName || user.name || '',
       email: profile.universityEmail || profile.personalEmail || user.email || '',
       status: user.status || 'Active',
@@ -80,35 +105,75 @@ const getAdminStudent = asyncHandler(async (req, res) => {
   const user = await User.findOne({ _id: userId, role: 'student' }).select('-passwordHash').lean();
   if (!user) return errorResponse(res, 'Student not found', null, 404);
   const profile = await StudentProfile.findOne({ userId }).lean() || {};
-  const [complaints, expenses, hostels, assignments, academic, fees, courses, exams, attendance, academicProfiles, requests, applications, notifications, reminders, documents, conversations] = await Promise.all([
-    Complaint.find({ userId }).lean(), Expense.find({ userId }).lean(), Hostel.find({ userId }).lean(),
+  const [complaints, expenses, hostelApplications, assignments, academic, fees, courses, exams, attendance, academicProfiles, requests, applications, notifications, reminders, documents, conversations, preferences] = await Promise.all([
+    Complaint.find({ userId }).lean(), Expense.find({ userId }).lean(), HostelApplication.find({ studentId: userId }).sort({ createdAt: -1 }).lean(),
     Assignment.find({ userId }).lean(), Academic.findOne({ userId }).lean(), Fee.find({ userId }).lean(),
     Course.find({ userId }).lean(), Exam.find({ userId }).lean(), Attendance.find({ userId }).lean(),
     AcademicProfile.find({ userId }).lean(), Request.find({ userId }).lean(), Application.find({ userId }).lean(),
     Notification.find({ $or: [{ userId }, { recipientId: userId }] }).lean(), Reminder.find({ userId }).lean(),
     UploadedFile.find({ userId }).lean(), AIConversation.find({ userId }).sort({ updatedAt: -1 }).lean(),
+    Preference.findOne({ userId }).lean(),
   ]);
   const student = {
     ...cleanRecord(profile), _id: asId(user._id), id: asId(user._id), userId: asId(user._id),
-    studentId: profile.studentId || asId(user._id), name: profile.fullName || user.name || '',
+    studentId: profile.studentId || '', rollNo: profile.rollNo || '',
+    studentName: profile.fullName || user.name || '', name: profile.fullName || user.name || '',
     email: profile.universityEmail || profile.personalEmail || user.email || '', status: user.status || 'Active',
   };
   const aiSearchHistory = conversations.flatMap((conversation) => (conversation.messages || [])
     .filter((message) => message.role === 'user')
-    .map((message) => ({ id: asId(message._id), conversationId: asId(conversation._id), userId: asId(user._id), studentId: asId(user._id), query: message.content, createdAt: message.createdAt || conversation.createdAt, status: 'Completed', provider: conversation.provider, model: conversation.model })));
+    .map((message) => ({
+      id: asId(message._id), conversationId: asId(conversation._id),
+      userId: asId(user._id), studentId: profile.studentId || '',
+      rollNo: profile.rollNo || '', studentName: profile.fullName || user.name || '',
+      query: message.content, createdAt: message.createdAt || conversation.createdAt,
+      status: 'Completed', provider: conversation.provider, model: conversation.model,
+    })));
   const academicRows = {
-    courses: courses.map(cleanRecord), exams: exams.map(cleanRecord), attendance: attendance.map(cleanRecord),
-    results: [], profiles: academicProfiles.map(cleanRecord), assignments: assignments.map(cleanRecord),
+    courses: courses.map((row) => ({
+      ...cleanRecord(row), userId: asId(userId), studentId: profile.studentId || '',
+      rollNo: profile.rollNo || '', studentName: profile.fullName || user.name || '',
+    })),
+    exams: exams.map((row) => ({
+      ...cleanRecord(row), userId: asId(userId), studentId: profile.studentId || '',
+      rollNo: profile.rollNo || '', studentName: profile.fullName || user.name || '',
+    })),
+    attendance: attendance.map((row) => ({
+      ...cleanRecord(row), userId: asId(userId), studentId: profile.studentId || '',
+      rollNo: profile.rollNo || '', studentName: profile.fullName || user.name || '',
+    })),
+    results: [],
+    profiles: academicProfiles.map((row) => ({
+      ...cleanRecord(row), userId: asId(userId), studentId: profile.studentId || '',
+      rollNo: profile.rollNo || '', studentName: profile.fullName || user.name || '',
+    })),
+    assignments: assignments.map((row) => ({
+      ...cleanRecord(row), userId: asId(userId), studentId: profile.studentId || '',
+      rollNo: profile.rollNo || '', studentName: profile.fullName || user.name || '',
+    })),
   };
   ['courses', 'exams', 'attendance', 'results'].forEach((kind) => {
-    (academic?.[kind] || []).forEach((row) => academicRows[kind].push({ ...cleanRecord(row), userId: asId(userId), studentId: asId(userId) }));
+    (academic?.[kind] || []).forEach((row) => academicRows[kind].push({
+      ...cleanRecord(row), userId: asId(userId), studentId: profile.studentId || '',
+      rollNo: profile.rollNo || '', studentName: profile.fullName || user.name || '',
+    }));
   });
-  const owned = (rows) => rows.map((row) => ({ ...cleanRecord(row), userId: asId(userId), studentId: asId(userId) }));
+  const owned = (rows) => rows.map((row) => {
+    const applicationDetails = applicationStudentDetails(row);
+    return {
+      ...cleanRecord(row), userId: asId(userId),
+      studentId: profile.studentId || applicationDetails.rollNo || '',
+      rollNo: profile.rollNo || applicationDetails.rollNo || '',
+      studentName: profile.fullName || user.name || applicationDetails.name,
+    };
+  });
   return successResponse(res, 'Admin student workspace', {
     student,
     workspace: {
       admin: { students: [student] }, complaints: owned(complaints), expenses: owned(expenses),
-      hostelApplications: owned(hostels), hostelFees: owned(fees), academic: academicRows,
+      hostelApplications: owned(hostelApplications), hostelFees: owned(fees), academic: academicRows,
+      monthlyBudget: Number(preferences?.monthlyBudget || 0),
+      budgetHistory: preferences?.budgetHistory || [],
       requests: owned(requests), applications: owned(applications), notifications: owned(notifications),
       reminders: owned(reminders), documents: owned(documents), aiSearchHistory,
     },
@@ -116,12 +181,12 @@ const getAdminStudent = asyncHandler(async (req, res) => {
 });
 
 const getWorkspace = asyncHandler(async (_req, res) => {
-  const [profiles, users, complaints, expenses, hostels, assignments, academic, fees, roles, permissions, records, courses, exams, attendance, academicProfiles, requests, applications, notifications, reminders, documents, conversations] = await Promise.all([
+  const [profiles, users, complaints, expenses, hostelApplications, assignments, academic, fees, roles, permissions, records, courses, exams, attendance, academicProfiles, requests, applications, notifications, reminders, documents, conversations] = await Promise.all([
     StudentProfile.find({}).lean(),
     User.find({}).select('-passwordHash').lean(),
     Complaint.find({}).lean(),
     Expense.find({}).lean(),
-    Hostel.find({}).lean(),
+    HostelApplication.find({}).sort({ createdAt: -1 }).lean(),
     Assignment.find({}).lean(),
     Academic.find({}).lean(),
     Fee.find({}).lean(),
@@ -143,12 +208,27 @@ const getWorkspace = asyncHandler(async (_req, res) => {
   const studentsByUserId = new Map(profiles.map((profile) => [asId(profile.userId), profile]));
   const students = users.filter((user) => user.role === 'student').map((user) => {
     const profile = studentsByUserId.get(asId(user._id)) || {};
-    return { ...cleanRecord(profile), id: asId(user._id), userId: asId(user._id), studentId: profile.studentId || asId(user._id), name: profile.fullName || user.name || '', email: profile.universityEmail || user.email || '', status: user.status || 'Active' };
+    return {
+      ...cleanRecord(profile), id: asId(user._id), userId: asId(user._id),
+      studentId: profile.studentId || '', rollNo: profile.rollNo || '',
+      studentName: profile.fullName || user.name || '',
+      name: profile.fullName || user.name || '',
+      email: profile.universityEmail || profile.personalEmail || user.email || '',
+      status: user.status || 'Active',
+    };
   });
 
   const mapOwned = (items) => items.map((item) => {
     const ownerId = item.userId || item.recipientId || item.studentId;
-    return { ...cleanRecord(item), userId: asId(ownerId), studentId: asId(item.studentId || ownerId) };
+    const profile = profileForReference(ownerId, studentsByUserId, profiles);
+    const user = usersById.get(asId(profile.userId || ownerId)) || {};
+    const applicationDetails = applicationStudentDetails(item);
+    return {
+      ...cleanRecord(item), userId: asId(profile.userId || ownerId),
+      studentId: profile.studentId || applicationDetails.rollNo || '',
+      rollNo: profile.rollNo || applicationDetails.rollNo || '',
+      studentName: profile.fullName || user.name || applicationDetails.name,
+    };
   });
   const generic = records.reduce((all, item) => {
     const mongoId = asId(item._id);
@@ -158,20 +238,28 @@ const getWorkspace = asyncHandler(async (_req, res) => {
       id: mongoId,
       key: mongoId,
       recordId: item.recordId,
-      targetUserId: asId(item.targetUserId),
+      targetUserId: asId(item.targetUserId || item.data?.userId || item.data?.studentId),
     };
+    const profile = profileForReference(row.targetUserId, studentsByUserId, profiles);
+    const user = usersById.get(asId(profile.userId || row.targetUserId)) || {};
+    row.userId = asId(profile.userId || row.targetUserId);
+    row.studentId = profile.studentId || '';
+    row.rollNo = profile.rollNo || '';
+    row.studentName = profile.fullName || user.name || '';
     (all[item.scope] ||= []).push(row);
     return all;
   }, {});
   const academicRows = {
-    courses: courses.map((row) => ({ ...cleanRecord(row), userId: asId(row.userId), studentId: asId(row.userId) })),
-    exams: exams.map((row) => ({ ...cleanRecord(row), userId: asId(row.userId), studentId: asId(row.userId) })),
-    attendance: attendance.map((row) => ({ ...cleanRecord(row), userId: asId(row.userId), studentId: asId(row.userId) })),
+    courses: mapOwned(courses),
+    exams: mapOwned(exams),
+    attendance: mapOwned(attendance),
     results: [],
     profiles: academicProfiles.map((profile) => ({
       ...cleanRecord(profile),
       userId: asId(profile.userId),
-      studentId: asId(profile.userId),
+      studentId: profile.studentId || '',
+      rollNo: profile.rollNo || '',
+      studentName: profile.fullName || '',
     })),
   };
   const aiSearchHistory = conversations.flatMap((conversation) =>
@@ -181,7 +269,10 @@ const getWorkspace = asyncHandler(async (_req, res) => {
         id: asId(message._id),
         conversationId: asId(conversation._id),
         userId: asId(conversation.userId),
-        studentId: asId(conversation.userId),
+        studentId: profileForReference(conversation.userId, studentsByUserId, profiles).studentId || '',
+        rollNo: profileForReference(conversation.userId, studentsByUserId, profiles).rollNo || '',
+        studentName: profileForReference(conversation.userId, studentsByUserId, profiles).fullName ||
+          usersById.get(asId(conversation.userId))?.name || '',
         query: message.content,
         createdAt: message.createdAt || conversation.createdAt,
         status: 'Completed',
@@ -191,14 +282,24 @@ const getWorkspace = asyncHandler(async (_req, res) => {
   );
   academic.forEach((record) => {
     ['courses', 'exams', 'attendance', 'results'].forEach((kind) => {
-      (record[kind] || []).forEach((row) => academicRows[kind].push({ ...row, id: asId(row._id), studentId: asId(record.userId), userId: asId(record.userId) }));
+      (record[kind] || []).forEach((row) => {
+        const profile = profileForReference(record.userId, studentsByUserId, profiles);
+        academicRows[kind].push({
+          ...row,
+          id: asId(row._id),
+          studentId: profile.studentId || '',
+          rollNo: profile.rollNo || '',
+          studentName: profile.fullName || usersById.get(asId(record.userId))?.name || '',
+          userId: asId(record.userId),
+        });
+      });
     });
   });
   return successResponse(res, 'Admin workspace', {
     admin: { students, users: users.map(cleanRecord), roles: roles.map(cleanRecord), permissions: permissions.map(cleanRecord), rooms: generic.rooms || [], allocations: generic.allocations || [], categories: generic.categories || [] },
     complaints: mapOwned(complaints),
     expenses: mapOwned(expenses),
-    hostelApplications: mapOwned(hostels),
+    hostelApplications: mapOwned(hostelApplications),
     hostelFees: mapOwned(fees),
     academic: { ...academicRows, assignments: mapOwned(assignments) },
     requests: mapOwned(requests),
