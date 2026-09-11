@@ -1,5 +1,5 @@
 const express = require('express');
-const { getDashboard, listRoles, listPermissions, getAuditLogs, getUsersForAdmin } = require('../controllers/adminController');
+const { getDashboard, listRoles, listPermissions, getAuditLogs } = require('../controllers/adminController');
 const { getWorkspace, getAdminStudents, getAdminStudent, getAdminStudentProfile, getAdminStudentLoginHistory, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity, createEntity } = require('../controllers/workspaceController');
 const { authorize } = require('../middleware/authorize');
 
@@ -16,7 +16,6 @@ router.delete('/workspace/:scope/:id', deleteGenericRecord);
 router.patch('/entities/:entity/:id', updateEntity);
 router.delete('/entities/:entity/:id', deleteEntity);
 router.post('/entities/:entity', createEntity);
-router.get('/users', getUsersForAdmin);
 router.get('/roles', listRoles);
 router.get('/permissions', listPermissions);
 router.get('/audit-logs', getAuditLogs);

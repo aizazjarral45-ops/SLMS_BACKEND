@@ -19,7 +19,6 @@ This backend was designed around the actual SLMS User and Admin web apps in this
 2. Start MongoDB locally or connect to a MongoDB Atlas instance.
 3. Install dependencies: `npm install`
 4. Start the API: `npm run dev`
-5. Seed demo data: `npm run seed`
 
 ## Environment
 

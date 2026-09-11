@@ -1,4 +1,3 @@
-const User = require('../models/User');
 const StudentProfile = require('../models/StudentProfile');
 const Complaint = require('../models/Complaint');
 const Request = require('../models/Request');
@@ -52,9 +51,4 @@ const getAuditLogs = asyncHandler(async (_req, res) => {
   return successResponse(res, 'Audit logs', { logs }, 200);
 });
 
-const getUsersForAdmin = asyncHandler(async (_req, res) => {
-  const users = await User.find({}).select('-passwordHash').sort({ createdAt: -1 });
-  return successResponse(res, 'Admin user directory', { users }, 200);
-});
-
-module.exports = { getDashboard, listRoles, listPermissions, getAuditLogs, getUsersForAdmin };
+module.exports = { getDashboard, listRoles, listPermissions, getAuditLogs };

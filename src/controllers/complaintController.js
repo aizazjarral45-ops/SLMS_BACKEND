@@ -6,6 +6,7 @@ const { recordStatusChange } = require('../services/statusService');
 const { createNotification } = require('../services/notificationService');
 const { isValidObjectId } = require('../utils/objectId');
 const { emitDataChange } = require('../config/socket');
+const VALID_STATUSES = new Set(Complaint.schema.path('status').enumValues);
 
 const listComplaints = asyncHandler(async (req, res) => {
   const filter = req.user.role === 'student' ? { userId: req.user._id } : {};
@@ -21,6 +22,9 @@ const createComplaint = asyncHandler(async (req, res) => {
 });
 const updateComplaintStatus = asyncHandler(async (req, res) => {
   if (!isValidObjectId(req.params.id)) return errorResponse(res, 'Complaint not found', null, 404);
+  if (req.body.status !== undefined && !VALID_STATUSES.has(req.body.status)) {
+    return errorResponse(res, 'Invalid complaint status', null, 400);
+  }
   const complaint = await Complaint.findById(req.params.id);
   if (!complaint) return errorResponse(res, 'Complaint not found', null, 404);
   const previousStatus = complaint.status;

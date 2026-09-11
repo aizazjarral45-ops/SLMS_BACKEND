@@ -47,6 +47,9 @@ const sendMessage = asyncHandler(async (req, res) => {
   const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
   if (!message) return errorResponse(res, "A message is required", null, 400);
   const userMessage = { role: "user", content: message };
+  if (!conversation.messages.length && conversation.title === "New conversation") {
+    conversation.title = message.slice(0, 40);
+  }
   conversation.messages.push(userMessage);
   await conversation.save();
 
