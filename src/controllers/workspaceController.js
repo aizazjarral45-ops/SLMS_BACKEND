@@ -15,6 +15,7 @@ const Request = require('../models/Request');
 const Application = require('../models/Application');
 const Notification = require('../models/Notification');
 const Reminder = require('../models/Reminder');
+const LoginHistory = require('../models/LoginHistory');
 const UploadedFile = require('../models/UploadedFile');
 const AIConversation = require('../models/AIConversation');
 const Preference = require('../models/Preference');
@@ -158,6 +159,7 @@ const getAdminStudent = asyncHandler(async (req, res) => {
       rollNo: profile.rollNo || '', studentName: profile.fullName || user.name || '',
     }));
   });
+
   const owned = (rows) => rows.map((row) => {
     const applicationDetails = applicationStudentDetails(row);
     return {
@@ -167,6 +169,7 @@ const getAdminStudent = asyncHandler(async (req, res) => {
       studentName: profile.fullName || user.name || applicationDetails.name,
     };
   });
+
   return successResponse(res, 'Admin student workspace', {
     student,
     workspace: {
@@ -180,7 +183,40 @@ const getAdminStudent = asyncHandler(async (req, res) => {
   }, 200);
 });
 
-const getWorkspace = asyncHandler(async (_req, res) => {
+const getAdminStudentLoginHistory = asyncHandler(async (req, res) => {
+  const userId = await resolveTargetUser(req.params.studentId);
+  if (!userId) return errorResponse(res, 'Student not found', null, 404);
+  const user = await User.findOne({ _id: userId, role: 'student' }).select('email').lean();
+  if (!user) return errorResponse(res, 'Student not found', null, 404);
+  const history = await LoginHistory.find({ userId })
+    .sort({ createdAt: -1, _id: -1 })
+    .limit(50)
+    .select('email eventType status ipAddress userAgent createdAt')
+    .lean();
+  return successResponse(res, 'Student login history', { history }, 200);
+});
+
+const getAdminStudentProfile = asyncHandler(async (req, res) => {
+  const userId = await resolveTargetUser(req.params.studentId);
+  if (!userId) return errorResponse(res, 'Student not found', null, 404);
+  const user = await User.findOne({ _id: userId, role: 'student' })
+    .select('name email status')
+    .lean();
+  if (!user) return errorResponse(res, 'Student not found', null, 404);
+  const profile = await StudentProfile.findOne({ userId }).lean();
+  if (!profile) return errorResponse(res, 'Profile not found', null, 404);
+  return successResponse(res, 'Student profile', {
+    profile: {
+      ...profile,
+      userId: asId(user._id),
+      accountName: user.name,
+      accountEmail: user.email,
+      status: user.status,
+    },
+  }, 200);
+});
+
+const getWorkspace = asyncHandler(async (req, res) => {
   const [profiles, users, complaints, expenses, hostelApplications, assignments, academic, fees, roles, permissions, records, courses, exams, attendance, academicProfiles, requests, applications, notifications, reminders, documents, conversations] = await Promise.all([
     StudentProfile.find({}).lean(),
     User.find({}).select('-passwordHash').lean(),
@@ -200,7 +236,7 @@ const getWorkspace = asyncHandler(async (_req, res) => {
     Request.find({}).lean(),
     Application.find({}).lean(),
     Notification.find({}).lean(),
-    Reminder.find({}).lean(),
+    Reminder.find({ userId: req.user._id }).lean(),
     UploadedFile.find({}).lean(),
     AIConversation.find({}).sort({ updatedAt: -1 }).lean(),
   ]);
@@ -230,7 +266,9 @@ const getWorkspace = asyncHandler(async (_req, res) => {
       studentName: profile.fullName || user.name || applicationDetails.name,
     };
   });
+  const adminId = String(req.user._id);
   const generic = records.reduce((all, item) => {
+    if (['reminders', 'settings'].includes(item.scope) && String(item.createdBy) !== adminId) return all;
     const mongoId = asId(item._id);
     const row = {
       ...(item.data || {}),
@@ -308,7 +346,10 @@ const getWorkspace = asyncHandler(async (_req, res) => {
     reminders: mapOwned(reminders),
     documents: mapOwned(documents),
     aiSearchHistory,
-    settings: { reminders: generic.reminders || [], ...(generic.settings?.[0] || {}) },
+    settings: {
+      reminders: [...(generic.reminders || []), ...reminders.map(cleanRecord)],
+      ...(generic.settings?.[0] || {}),
+    },
   }, 200);
 });
 
@@ -440,4 +481,4 @@ const createEntity = asyncHandler(async (req, res) => {
   return successResponse(res, 'Record created', { record: cleanRecord(item) }, 201);
 });
 
-module.exports = { getWorkspace, getAdminStudents, getAdminStudent, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity, createEntity };
+module.exports = { getWorkspace, getAdminStudents, getAdminStudent, getAdminStudentProfile, getAdminStudentLoginHistory, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity, createEntity };

@@ -22,6 +22,9 @@ const settingsSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true, index: true },
   notifications: { type: new mongoose.Schema(notificationFields, { _id: false }), default: () => ({}) },
   ai: { type: new mongoose.Schema(aiFields, { _id: false }), default: () => ({}) },
+  theme: { type: String, default: 'Light' },
+  security: { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
+  preferences: { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Settings', settingsSchema);

@@ -1,6 +1,6 @@
 const express = require('express');
 const { getDashboard, listRoles, listPermissions, getAuditLogs, getUsersForAdmin } = require('../controllers/adminController');
-const { getWorkspace, getAdminStudents, getAdminStudent, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity, createEntity } = require('../controllers/workspaceController');
+const { getWorkspace, getAdminStudents, getAdminStudent, getAdminStudentProfile, getAdminStudentLoginHistory, saveGenericRecord, deleteGenericRecord, updateEntity, deleteEntity, createEntity } = require('../controllers/workspaceController');
 const { authorize } = require('../middleware/authorize');
 
 const router = express.Router();
@@ -8,6 +8,8 @@ router.use(authorize('admin', 'super_admin'));
 router.get('/dashboard', getDashboard);
 router.get('/workspace', getWorkspace);
 router.get('/students', getAdminStudents);
+router.get('/students/:studentId/profile', getAdminStudentProfile);
+router.get('/students/:studentId/login-history', getAdminStudentLoginHistory);
 router.get('/students/:studentId', getAdminStudent);
 router.put('/workspace/:scope/:id', (req, _res, next) => { req.body.record = { ...(req.body.record || req.body), id: req.params.id }; next(); }, saveGenericRecord);
 router.delete('/workspace/:scope/:id', deleteGenericRecord);

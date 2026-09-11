@@ -16,7 +16,7 @@ async function authenticateAdmin(req, res, next) {
     }
 
     const admin = await Admin.findById(decoded.id).select('-password');
-    if (!admin || admin.role !== 'admin') {
+    if (!admin || admin.role !== 'admin' || (decoded.tokenVersion || 0) !== (admin.tokenVersion || 0)) {
       return errorResponse(res, 'Unauthorized', null, 401);
     }
 

@@ -20,6 +20,10 @@ const adminSchema = new mongoose.Schema({
     default: 'admin',
     immutable: true,
   },
+  tokenVersion: {
+    type: Number,
+    default: 0,
+  },
 }, { timestamps: true });
 
 adminSchema.pre('save', async function hashPassword() {
