@@ -1,4 +1,3 @@
-const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const StudentProfile = require('../models/StudentProfile');
 const Notification = require('../models/Notification');
@@ -65,6 +64,7 @@ const updateProfile = asyncHandler(async (req, res) => {
         ...(semester !== undefined ? { semester } : {}),
         ...(batch !== undefined ? { batch } : {}),
       },
+      $unset: { CGP: 1 },
       $setOnInsert: { userId: user._id },
     },
     { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
@@ -117,65 +117,11 @@ const markNotificationRead = asyncHandler(async (req, res) => {
   return successResponse(res, 'Notification marked as read', { notification: item }, 200);
 });
 
-const deleteOwnAccount = asyncHandler(async (req, res) => {
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  if (!password) return errorResponse(res, 'Password is required', null, 400);
-
-  const user = await User.findById(req.user._id);
-  if (!user) return errorResponse(res, 'User not found', null, 404);
-
-  const passwordMatches = await bcrypt.compare(password, user.passwordHash);
-  if (!passwordMatches) return errorResponse(res, 'Incorrect Password', null, 401);
-
-  const userId = user._id;
-  const userEmail = user.email;
-  const deletionOperations = [
-    [StudentProfile, { userId }],
-    [Academic, { userId }],
-    [AcademicProfile, { userId }],
-    [Application, { userId }],
-    [Assignment, { userId }],
-    [Attendance, { userId }],
-    [AIConversation, { userId }],
-    [Comment, { userId }],
-    [Complaint, { userId }],
-    [Course, { userId }],
-    [Expense, { userId }],
-    [Exam, { userId }],
-    [Fee, { userId }],
-    [Hostel, { userId }],
-    [HostelApplication, { studentId: userId }],
-    [LoginHistory, { $or: [{ userId }, { email: userEmail }] }],
-    [Message, { $or: [{ senderId: userId }, { receiverId: userId }] }],
-    [PasswordResetToken, { userId }],
-    [Preference, { userId }],
-    [Settings, { userId }],
-    [Reminder, { userId }],
-    [Request, { userId }],
-    [Session, { userId }],
-    [StatusHistory, { changedBy: userId }],
-    [UploadedFile, { userId }],
-    [Notification, { $or: [{ recipientId: userId }, { recipientId: null, userId }] }],
-  ];
-
-  for (const [Model, filter] of deletionOperations) {
-    await Model.deleteMany(filter);
-  }
-
-  const deletedUser = await User.deleteOne({ _id: userId });
-  if (deletedUser.deletedCount !== 1) {
-    return errorResponse(res, 'Account deletion failed', null, 500);
-  }
-
-  return successResponse(res, 'Account deleted permanently', null, 200);
-});
-
 module.exports = {
   getProfile,
   updateProfile,
   listUsers,
   deleteUser,
-  deleteOwnAccount,
   getNotifications,
   markNotificationRead,
 };

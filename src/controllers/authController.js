@@ -1,4 +1,5 @@
 ﻿const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../models/User');
@@ -6,14 +7,22 @@ const Session = require('../models/Session');
 const LoginHistory = require('../models/LoginHistory');
 const StudentProfile = require('../models/StudentProfile');
 const PasswordResetToken = require('../models/PasswordResetToken');
+const EmailVerification = require('../models/EmailVerification');
+const AccountDeletionRequest = require('../models/AccountDeletionRequest');
 const { createNotification } = require('../services/notificationService');
 const { signToken } = require('../services/authService');
-const { sendPasswordResetOtp } = require('../services/emailService');
+const { sendPasswordResetOtp, sendSignupVerificationOtp, sendAccountDeletionOtp } = require('../services/emailService');
+const { permanentlyDeleteAccount } = require('../services/accountDeletionService');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 
 const MAX_LOGIN_ATTEMPTS = Math.max(1, Number.parseInt(process.env.AUTH_MAX_LOGIN_ATTEMPTS, 10) || 5);
 const LOCKOUT_MINUTES = Math.max(1, Number.parseInt(process.env.AUTH_LOCKOUT_MINUTES, 10) || 15);
+const DELETION_OTP_TTL_MS = 10 * 60 * 1000;
+const DELETION_RESEND_INTERVAL_MS = 60 * 1000;
+const DELETION_SEND_WINDOW_MS = 60 * 60 * 1000;
+const DELETION_MAX_SENDS_PER_WINDOW = 3;
+const DELETION_MAX_ATTEMPTS = 5;
 
 function getRequestMeta(req) {
   const forwarded = req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip']);
@@ -98,52 +107,117 @@ async function codesMatch(code, storedHash) {
   return bcrypt.compare(code, storedHash);
 }
 
-const register = asyncHandler(async (req, res) => {
-  const { name, email, password } = req.body;
-  const role = 'student';
+const startEmailVerification = asyncHandler(async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
+  if (name.length < 2 || name.length > 50 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || password.length < 8) {
+    return errorResponse(res, 'A valid name, email and password are required', null, 400);
+  }
+  const existing = await User.findOne({ email }).select('_id');
+  if (existing) return errorResponse(res, 'User already exists', null, 409);
 
-  if (!name || !email || !password) {
-    return errorResponse(res, 'Name, email and password are required', null, 400);
+  const otp = String(crypto.randomInt(100000, 1000000));
+  const verification = await EmailVerification.findOneAndUpdate(
+    { email },
+    {
+      name,
+      email,
+      passwordHash: await bcrypt.hash(password, 10),
+      otpHash: await hashResetCode(otp),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      lastSentAt: new Date(),
+      attempts: 0,
+      consumedAt: null,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+  try {
+    await sendSignupVerificationOtp(email, otp);
+  } catch (error) {
+    await EmailVerification.deleteOne({ _id: verification._id });
+    throw error;
+  }
+  return successResponse(res, 'Verification code sent successfully.', {
+    verificationId: verification._id,
+    email,
+  }, 200);
+});
+
+const verifyEmail = asyncHandler(async (req, res) => {
+  const verificationId = String(req.body.verificationId || '').trim();
+  const code = String(req.body.otp || '').trim();
+  if (!mongoose.isValidObjectId(verificationId) || !/^\d{6}$/.test(code)) {
+    return errorResponse(res, 'A valid verification code is required', null, 400);
+  }
+  const verification = await EmailVerification.findOne({
+    _id: verificationId,
+    consumedAt: null,
+    expiresAt: { $gt: new Date() },
+  });
+  if (!verification) return errorResponse(res, 'Code is invalid or expired', null, 400);
+  if (verification.attempts >= 5) return errorResponse(res, 'Too many verification attempts', null, 429);
+  if (!(await codesMatch(code, verification.otpHash))) {
+    await EmailVerification.updateOne({ _id: verification._id, consumedAt: null }, { $inc: { attempts: 1 } });
+    return errorResponse(res, 'Code is invalid or expired', null, 400);
   }
 
-  const cleanedEmail = String(email).trim().toLowerCase();
-  const existing = await User.findOne({ email: cleanedEmail });
-  if (existing) {
-    return errorResponse(res, 'User already exists', null, 409);
+  const claimed = await EmailVerification.findOneAndUpdate(
+    { _id: verification._id, consumedAt: null, expiresAt: { $gt: new Date() } },
+    { $set: { consumedAt: new Date() } },
+    { new: true },
+  );
+  if (!claimed) return errorResponse(res, 'Verification has already been completed', null, 409);
+  try {
+    const existing = await User.findOne({ email: claimed.email });
+    if (existing) return errorResponse(res, 'User already exists', null, 409);
+    const user = await User.create({
+      name: claimed.name,
+      email: claimed.email,
+      passwordHash: claimed.passwordHash,
+      role: 'student',
+      isEmailVerified: true,
+      permissions: ['view_dashboard', 'submit_requests', 'submit_complaints'],
+    });
+    await StudentProfile.create({
+      userId: user._id,
+      fullName: claimed.name,
+      universityEmail: claimed.email,
+      program: 'General',
+    });
+    await logAuthEvent({
+      req,
+      userId: user._id,
+      email: user.email,
+      eventType: 'SIGN_UP',
+      status: 'SIGN_UP',
+      metadata: { createdVia: 'email_verification' },
+    });
+    await createSignupNotification(user._id);
+    await EmailVerification.deleteOne({ _id: claimed._id });
+    return successResponse(res, 'Email verified. You can now login.', null, 200);
+  } catch (error) {
+    await EmailVerification.updateOne({ _id: claimed._id }, { $set: { consumedAt: null } });
+    throw error;
   }
+});
 
-  const passwordHash = await bcrypt.hash(password, 10);
-  const user = await User.create({
-    name,
-    email: cleanedEmail,
-    passwordHash,
-    role,
-    permissions: role === 'admin'
-      ? ['manage_students', 'manage_academics', 'manage_hostel', 'approve_finance', 'resolve_complaints']
-      : ['view_dashboard', 'submit_requests', 'submit_complaints'],
-  });
-
-  await StudentProfile.create({
-    userId: user._id,
-    fullName: name,
-    universityEmail: cleanedEmail,
-    program: 'General',
-  });
-
-  await logAuthEvent({
-    req,
-    userId: user._id,
-    email: user.email,
-    eventType: 'SIGN_UP',
-    status: 'SIGN_UP',
-    metadata: { createdVia: 'register' },
-  });
-  await createSignupNotification(user._id);
-
-  const safeUser = user.toObject();
-  delete safeUser.passwordHash;
-
-  return successResponse(res, 'Registration successful', { user: safeUser }, 201);
+const resendEmailVerification = asyncHandler(async (req, res) => {
+  const verificationId = String(req.body.verificationId || '').trim();
+  if (!mongoose.isValidObjectId(verificationId)) return errorResponse(res, 'Verification session is invalid', null, 400);
+  const verification = await EmailVerification.findOne({ _id: verificationId, consumedAt: null });
+  if (!verification) return errorResponse(res, 'Verification session is invalid or expired', null, 400);
+  if (verification.lastSentAt && Date.now() - verification.lastSentAt.getTime() < 60 * 1000) {
+    return errorResponse(res, 'Please wait before requesting another code', null, 429);
+  }
+  const otp = String(crypto.randomInt(100000, 1000000));
+  verification.otpHash = await hashResetCode(otp);
+  verification.expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  verification.lastSentAt = new Date();
+  verification.attempts = 0;
+  await verification.save();
+  await sendSignupVerificationOtp(verification.email, otp);
+  return successResponse(res, 'A new verification code was sent.', { email: verification.email }, 200);
 });
 
 const login = asyncHandler(async (req, res) => {
@@ -348,6 +422,104 @@ const changePassword = asyncHandler(async (req, res) => {
   return successResponse(res, 'Password updated successfully', null, 200);
 });
 
+const requestAccountDeletion = asyncHandler(async (req, res) => {
+  const currentPassword = typeof req.body.currentPassword === 'string'
+    ? req.body.currentPassword
+    : '';
+  const user = await User.findById(req.userId).select('_id email passwordHash');
+  if (!user) return errorResponse(res, 'User not found', null, 404);
+
+  const now = Date.now();
+  let request = await AccountDeletionRequest.findOne({ userId: user._id });
+  const passwordWasRecentlyVerified = request?.passwordVerifiedAt
+    && now - request.passwordVerifiedAt.getTime() < DELETION_OTP_TTL_MS;
+  const isResend = req.path.endsWith('/resend');
+  if (!isResend && !currentPassword) {
+    return errorResponse(res, 'Current password is required.', null, 400);
+  }
+  if (currentPassword) {
+    const validPassword = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!validPassword) return errorResponse(res, 'Incorrect password. Please try again.', null, 401);
+  } else if (!passwordWasRecentlyVerified) {
+    return errorResponse(res, 'Current password verification is required.', null, 401);
+  }
+
+  if (request && request.lastSentAt && now - request.lastSentAt.getTime() < DELETION_RESEND_INTERVAL_MS) {
+    return errorResponse(res, 'Please wait before requesting another code', null, 429);
+  }
+  if (request && now - request.sendWindowStartedAt.getTime() >= DELETION_SEND_WINDOW_MS) {
+    request.sendWindowStartedAt = new Date(now);
+    request.sendsInWindow = 0;
+  }
+  if (request && request.sendsInWindow >= DELETION_MAX_SENDS_PER_WINDOW) {
+    return errorResponse(res, 'Too many deletion code requests. Please try again later.', null, 429);
+  }
+
+  const otp = String(crypto.randomInt(100000, 1000000));
+  if (!request) {
+    request = new AccountDeletionRequest({
+      userId: user._id,
+      email: user.email,
+      sendWindowStartedAt: new Date(now),
+      sendsInWindow: 0,
+    });
+  }
+  request.email = user.email;
+  request.otpHash = await hashResetCode(otp);
+  request.expiresAt = new Date(now + DELETION_OTP_TTL_MS);
+  request.lastSentAt = new Date(now);
+  request.sendsInWindow += 1;
+  request.attempts = 0;
+  request.passwordVerifiedAt = new Date(now);
+  request.consumedAt = null;
+  await request.save();
+
+  try {
+    await sendAccountDeletionOtp(user.email, otp);
+  } catch (error) {
+    await AccountDeletionRequest.deleteOne({ _id: request._id });
+    throw error;
+  }
+
+  return successResponse(res, 'Account deletion verification code sent.', null, 200);
+});
+
+const confirmAccountDeletion = asyncHandler(async (req, res) => {
+  const code = String(req.body.otp || req.body.code || '').trim();
+  if (!/^\d{6}$/.test(code)) return errorResponse(res, 'A valid six-digit OTP is required', null, 400);
+
+  const request = await AccountDeletionRequest.findOne({
+    userId: req.userId,
+    consumedAt: null,
+    expiresAt: { $gt: new Date() },
+  });
+  if (!request) return errorResponse(res, 'Code is invalid or expired', null, 400);
+  if (request.attempts >= DELETION_MAX_ATTEMPTS) return errorResponse(res, 'Too many verification attempts', null, 429);
+  if (!(await codesMatch(code, request.otpHash))) {
+    await AccountDeletionRequest.updateOne(
+      { _id: request._id, consumedAt: null },
+      { $inc: { attempts: 1 } },
+    );
+    return errorResponse(res, 'Code is invalid or expired', null, 400);
+  }
+
+  const claimed = await AccountDeletionRequest.findOneAndUpdate(
+    { _id: request._id, userId: req.userId, consumedAt: null, expiresAt: { $gt: new Date() } },
+    { $set: { consumedAt: new Date() } },
+    { new: true },
+  );
+  if (!claimed) return errorResponse(res, 'Deletion request has already been completed', null, 409);
+
+  try {
+    await permanentlyDeleteAccount(req.userId, claimed.email);
+  } catch (error) {
+    await AccountDeletionRequest.updateOne({ _id: claimed._id }, { $set: { consumedAt: null } });
+    throw error;
+  }
+
+  return successResponse(res, 'Account deleted permanently', null, 200);
+});
+
 const createResetToken = asyncHandler(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   if (!email) return errorResponse(res, 'Email is required', null, 400);
@@ -466,12 +638,16 @@ const getLoginHistory = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  register,
+  startEmailVerification,
+  verifyEmail,
+  resendEmailVerification,
   login,
   logout,
   refreshToken,
   me,
   changePassword,
+  requestAccountDeletion,
+  confirmAccountDeletion,
   forgotPassword,
   resetPassword,
   verifyResetToken,

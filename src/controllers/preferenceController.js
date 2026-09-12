@@ -1,7 +1,7 @@
 const Preference = require('../models/Preference');
 const { successResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
-const { createNotification } = require('../services/notificationService');
+const { createNotification, ensureBudgetNotifications } = require('../services/notificationService');
 const { emitDataChange } = require('../config/socket');
 
 const getPreferences = asyncHandler(async (req, res) => {
@@ -33,6 +33,7 @@ const updatePreferences = asyncHandler(async (req, res) => {
       relatedId: preferences._id,
       dedupeKey: `budget:update:${preferences._id}:${preferences.updatedAt.getTime()}`,
     });
+    await ensureBudgetNotifications(req.userId, preferences);
   }
   emitDataChange({ userId: req.user._id, resource: 'preferences', action: 'updated', record: preferences });
   return successResponse(res, 'Preferences updated', { preferences }, 200);

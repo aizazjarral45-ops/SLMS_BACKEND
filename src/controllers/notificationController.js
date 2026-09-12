@@ -2,7 +2,7 @@ const Notification = require('../models/Notification');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 const { isValidObjectId } = require('../utils/objectId');
-const { ensureDerivedNotifications } = require('../services/notificationService');
+const { ensureDerivedNotifications, isNotificationEnabled } = require('../services/notificationService');
 const { emitToUser } = require('../config/socket');
 
 const ownerFilter = (userId) => ({
@@ -11,20 +11,30 @@ const ownerFilter = (userId) => ({
 const unreadFilter = {
   $or: [{ isRead: false }, { isRead: { $exists: false }, read: false }],
 };
+const filterEnabledNotifications = async (userId, notifications) => (
+  (await Promise.all(
+    notifications.map(async (notification) => (
+      (await isNotificationEnabled(userId, notification)) ? notification : null
+    )),
+  )).filter(Boolean)
+);
 
 const getNotifications = asyncHandler(async (req, res) => {
   await ensureDerivedNotifications(req.userId);
-  const notifications = await Notification.find(ownerFilter(req.userId)).sort({ createdAt: -1, _id: -1 });
+  const records = await Notification.find(ownerFilter(req.userId)).sort({ createdAt: -1, _id: -1 }).lean();
+  const notifications = await filterEnabledNotifications(req.userId, records);
   return successResponse(res, 'Notifications', { notifications }, 200);
 });
 const getUnreadNotifications = asyncHandler(async (req, res) => {
   await ensureDerivedNotifications(req.userId);
-  const notifications = await Notification.find({ $and: [ownerFilter(req.userId), unreadFilter] }).sort({ createdAt: -1, _id: -1 });
+  const records = await Notification.find({ $and: [ownerFilter(req.userId), unreadFilter] }).sort({ createdAt: -1, _id: -1 }).lean();
+  const notifications = await filterEnabledNotifications(req.userId, records);
   return successResponse(res, 'Unread notifications', { notifications }, 200);
 });
 const unreadCount = asyncHandler(async (req, res) => {
   await ensureDerivedNotifications(req.userId);
-  const count = await Notification.countDocuments({ $and: [ownerFilter(req.userId), unreadFilter] });
+  const records = await Notification.find({ $and: [ownerFilter(req.userId), unreadFilter] }).select('module type').lean();
+  const count = (await filterEnabledNotifications(req.userId, records)).length;
   return successResponse(res, 'Unread notification count', { count }, 200);
 });
 const markAsRead = asyncHandler(async (req, res) => {

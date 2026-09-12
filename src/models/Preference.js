@@ -7,6 +7,7 @@ const preferenceSchema = new mongoose.Schema({
   reminders: { type: [mongoose.Schema.Types.Mixed], default: [] },
   monthlyBudget: { type: Number, default: 0 },
   budgetHistory: { type: [Number], default: [] },
+  budgetAlertState: { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Preference', preferenceSchema);

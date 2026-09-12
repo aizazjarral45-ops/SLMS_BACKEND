@@ -1,6 +1,7 @@
 const Notification = require('../models/Notification');
 const User = require('../models/User');
 const Preference = require('../models/Preference');
+const Settings = require('../models/Settings');
 const Expense = require('../models/Expense');
 const Assignment = require('../models/Assignment');
 const Exam = require('../models/Exam');
@@ -11,6 +12,24 @@ const Fee = require('../models/Fee');
 const StudentProfile = require('../models/StudentProfile');
 const Reminder = require('../models/Reminder');
 const { emitToUser, emitDataChange } = require('../config/socket');
+
+const notificationSettingKey = ({ module = '', type = '' } = {}) => {
+  const normalizedModule = String(module).toLowerCase();
+  const normalizedType = String(type).toLowerCase();
+  if (normalizedModule === 'expenses' || normalizedModule === 'expense' || normalizedType === 'expense') return 'expense';
+  if (normalizedModule === 'complaints' || normalizedModule === 'complaint' || normalizedType === 'complaint') return 'complaints';
+  if (normalizedModule === 'hostel' || normalizedModule === 'applications' || normalizedModule === 'application' || normalizedType === 'hostel') return 'hostel';
+  if (['assignment', 'quiz', 'exam', 'attendance', 'reminder', 'ai'].includes(normalizedModule)) return normalizedModule;
+  if (['assignment', 'quiz', 'exam', 'attendance', 'reminder', 'ai'].includes(normalizedType)) return normalizedType;
+  return null;
+};
+
+async function isNotificationEnabled(recipientId, notification) {
+  const settingKey = notificationSettingKey(notification);
+  if (!settingKey) return true;
+  const settings = await Settings.findOne({ userId: recipientId }).select('notifications').lean();
+  return settings?.notifications?.[settingKey] !== false;
+}
 
 async function createNotification({
   userId,
@@ -50,6 +69,7 @@ async function createNotification({
   const notifications = [];
   const createdNotifications = [];
   for (const recipientId of recipientIds) {
+    if (!(await isNotificationEnabled(recipientId, { module, type }))) continue;
     const payload = {
       recipientId,
       senderId: sourceUserId,
@@ -115,12 +135,130 @@ const dateOnly = (value) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
-async function ensureDerivedNotifications(userId) {
+async function ensureBudgetNotifications(userId, preference = null) {
+  const currentPreference = preference || await Preference.findOne({ userId }).lean();
+  const settings = await Settings.findOne({ userId }).select('notifications.expense').lean();
+  if (settings?.notifications?.expense === false) return;
+  const budget = Number(currentPreference?.monthlyBudget || 0);
+  if (budget <= 0) {
+    if (currentPreference?.budgetAlertState) {
+      await Preference.updateOne({
+        userId,
+      }, {
+        $set: {
+          budgetAlertState: {
+            version: 2,
+            period: new Date().toISOString().slice(0, 7),
+            low: false,
+            low25: false,
+            strong: false,
+            critical: false,
+            exhausted: false,
+            lowCycle: Number(currentPreference.budgetAlertState.lowCycle || 0),
+            low25Cycle: Number(currentPreference.budgetAlertState.low25Cycle || 0),
+            strongCycle: Number(currentPreference.budgetAlertState.strongCycle || 0),
+            criticalCycle: Number(currentPreference.budgetAlertState.criticalCycle || 0),
+            exhaustedCycle: Number(currentPreference.budgetAlertState.exhaustedCycle || 0),
+          },
+        },
+      });
+    }
+    return;
+  }
+
   const now = new Date();
   const period = now.toISOString().slice(0, 7);
-  const [preference, expenses, assignments, exams, attendance, hostels, hostelApplications, fees, profile, reminders] = await Promise.all([
+  const expenses = await Expense.find({ userId }).select('amount date createdAt').lean();
+  const spent = expenses.reduce((sum, item) => {
+    const date = String(item.date || item.createdAt || '');
+    return date.slice(0, 7) === period ? sum + Number(item.amount || 0) : sum;
+  }, 0);
+  const remainingRatio = (budget - spent) / budget;
+  const remainingPercentage = Math.max(0, remainingRatio * 100);
+  const remainingPercentageLabel = `${Number(remainingPercentage.toFixed(2))}%`;
+  const exhausted = remainingRatio <= 0;
+  const thresholds = [
+    {
+      key: 'low',
+      active: remainingRatio <= 0.5 && remainingRatio > 0.25 && !exhausted,
+      title: 'Budget Warning',
+      priority: 'warning',
+      message: `Your remaining budget is below 50%. Current remaining budget: ${remainingPercentageLabel}.`,
+    },
+    {
+      key: 'low25',
+      active: remainingRatio <= 0.25 && remainingRatio > 0.2 && !exhausted,
+      title: 'Budget Running Low',
+      priority: 'warning',
+      message: `Your budget is running low. Your remaining budget is ${remainingPercentageLabel}.`,
+    },
+    {
+      key: 'strong',
+      active: remainingRatio <= 0.2 && remainingRatio > 0.15 && !exhausted,
+      title: 'Budget Warning',
+      priority: 'high',
+      message: `Warning: Your remaining budget is ${remainingPercentageLabel}.`,
+    },
+    {
+      key: 'critical',
+      active: remainingRatio <= 0.15 && !exhausted,
+      title: 'Critical Budget Alert',
+      priority: 'critical',
+      message: `Critical Alert: Your remaining budget is ${remainingPercentageLabel}.`,
+    },
+    {
+      key: 'exhausted',
+      active: exhausted,
+      title: 'Budget exhausted',
+      priority: 'critical',
+      message: 'Your budget has been exhausted. You have no remaining budget.',
+    },
+  ];
+  const previous = currentPreference?.budgetAlertState || {};
+  const state = previous.version === 2 && previous.period === period
+    ? { ...previous }
+    : {
+      version: 2,
+      period,
+      low: false,
+      low25: false,
+      strong: false,
+      critical: false,
+      exhausted: false,
+      lowCycle: 0,
+      low25Cycle: 0,
+      strongCycle: 0,
+      criticalCycle: 0,
+      exhaustedCycle: 0,
+    };
+
+  for (const threshold of thresholds) {
+    const wasActive = state[threshold.key] === true;
+    if (threshold.active && !wasActive) {
+      const cycleKey = `${threshold.key}Cycle`;
+      state[cycleKey] = Number(state[cycleKey] || 0) + 1;
+      await createNotification({
+        userId,
+        title: threshold.title,
+        message: threshold.message,
+        type: 'expense',
+        module: 'expenses',
+        navigationTarget: '/expense',
+        priority: threshold.priority,
+        severity: threshold.priority,
+        dedupeKey: `budget:${period}:${threshold.key}:${state[cycleKey]}`,
+      });
+    }
+    state[threshold.key] = threshold.active;
+  }
+
+  await Preference.updateOne({ userId }, { $set: { budgetAlertState: state } });
+}
+
+async function ensureDerivedNotifications(userId) {
+  const now = new Date();
+  const [preference, assignments, exams, attendance, hostels, hostelApplications, fees, profile, reminders] = await Promise.all([
     Preference.findOne({ userId }).lean(),
-    Expense.find({ userId }).select('amount date createdAt').lean(),
     Assignment.find({ userId }).select('title course dueDate status').lean(),
     Exam.find({ userId }).select('title course examDate').lean(),
     Attendance.find({ userId }).select('course attended total').lean(),
@@ -131,33 +269,7 @@ async function ensureDerivedNotifications(userId) {
     Reminder.find({ userId, done: false }).select('title type when').lean(),
   ]);
 
-  const budget = Number(preference?.monthlyBudget || 0);
-  const spent = expenses.reduce((sum, item) => {
-    const date = String(item.date || item.createdAt || '');
-    return date.slice(0, 7) === period ? sum + Number(item.amount || 0) : sum;
-  }, 0);
-  if (budget > 0) {
-    const remaining = budget - spent;
-    const ratio = remaining / budget;
-    const thresholds = ratio <= 0
-      ? [['exhausted', 'Budget Exhausted']]
-      : [
-          ...(ratio <= 0.25 ? [['low', 'Low Budget Warning']] : []),
-          ...(ratio <= 0.5 ? [['warning', 'Budget Warning']] : []),
-        ];
-    for (const [threshold, title] of thresholds) {
-      await createNotification({
-        userId,
-        title,
-        message: `Your budget is ${Math.max(0, ratio * 100).toFixed(0)}% remaining.`,
-        type: 'expense',
-        module: 'expenses',
-        navigationTarget: '/expense',
-        priority: threshold === 'warning' ? 'warning' : 'critical',
-        dedupeKey: `budget:${period}:${threshold}`,
-      });
-    }
-  }
+  await ensureBudgetNotifications(userId, preference);
 
   const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const daysUntil = (value) => {
@@ -272,4 +384,9 @@ async function ensureDerivedNotifications(userId) {
   }
 }
 
-module.exports = { createNotification, ensureDerivedNotifications };
+module.exports = {
+  createNotification,
+  ensureBudgetNotifications,
+  ensureDerivedNotifications,
+  isNotificationEnabled,
+};

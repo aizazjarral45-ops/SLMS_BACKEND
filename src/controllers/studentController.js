@@ -39,6 +39,37 @@ const PROFILE_FIELDS = [
   "rollNo",
 ];
 
+const PROFILE_COMPLETION_FIELDS = [
+  "studentId",
+  "rollNo",
+  "department",
+  "fullName",
+  "fatherName",
+  "gender",
+  "phone",
+  "nationality",
+  "universityEmail",
+  "personalEmail",
+];
+
+const isValidRequiredProfileValue = (field, value) => {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return false;
+  }
+  if (field === "universityEmail" || field === "personalEmail") {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim());
+  }
+  return true;
+};
+
+const isProfileCompleted = (profile) =>
+  Boolean(
+    profile &&
+      PROFILE_COMPLETION_FIELDS.every((field) => {
+        return isValidRequiredProfileValue(field, profile[field]);
+      }),
+  );
+
 const getStudentDashboard = asyncHandler(async (req, res) => {
   const profile = await StudentProfile.findOne({ userId: req.userId });
   const [academicProfile, courses, exams, attendance] = await Promise.all([
@@ -91,9 +122,14 @@ const getStudentDashboard = asyncHandler(async (req, res) => {
 });
 
 const getStudentProfile = asyncHandler(async (req, res) => {
+  res.set("Cache-Control", "no-store");
   const profile = await StudentProfile.findOne({ userId: req.userId });
-  if (!profile) return errorResponse(res, "Profile not found", null, 404);
-  return successResponse(res, "Student profile", { profile }, 200);
+  return successResponse(
+    res,
+    "Student profile",
+    { profile: profile || null, profileCompleted: isProfileCompleted(profile) },
+    200,
+  );
 });
 
 const updateStudentProfile = asyncHandler(async (req, res) => {
@@ -120,13 +156,17 @@ const updateStudentProfile = asyncHandler(async (req, res) => {
     );
   const updated = await StudentProfile.findOneAndUpdate(
     { userId: req.userId },
-    { $set: update, $setOnInsert: { userId: req.userId } },
+    {
+      $set: update,
+      $unset: { CGP: 1 },
+      $setOnInsert: { userId: req.userId },
+    },
     { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
   );
   return successResponse(
     res,
     "Student profile updated",
-    { profile: updated },
+    { profile: updated, profileCompleted: isProfileCompleted(updated) },
     200,
   );
 });

@@ -63,7 +63,11 @@ const updateProfile = asyncHandler(async (req, res) => {
     );
   const profile = await StudentProfile.findOneAndUpdate(
     userFilter(req),
-    { $set: update, $setOnInsert: { userId: req.user._id } },
+    {
+      $set: update,
+      $unset: { CGP: 1 },
+      $setOnInsert: { userId: req.user._id },
+    },
     { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
   );
   const requiredProfileFields = [
