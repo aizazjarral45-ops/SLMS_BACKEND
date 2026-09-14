@@ -147,17 +147,13 @@ async function ensureBudgetNotifications(userId, preference = null) {
       }, {
         $set: {
           budgetAlertState: {
-            version: 2,
+            version: 3,
             period: new Date().toISOString().slice(0, 7),
             low: false,
             low25: false,
-            strong: false,
-            critical: false,
             exhausted: false,
             lowCycle: Number(currentPreference.budgetAlertState.lowCycle || 0),
             low25Cycle: Number(currentPreference.budgetAlertState.low25Cycle || 0),
-            strongCycle: Number(currentPreference.budgetAlertState.strongCycle || 0),
-            criticalCycle: Number(currentPreference.budgetAlertState.criticalCycle || 0),
             exhaustedCycle: Number(currentPreference.budgetAlertState.exhaustedCycle || 0),
           },
         },
@@ -174,61 +170,45 @@ async function ensureBudgetNotifications(userId, preference = null) {
     return date.slice(0, 7) === period ? sum + Number(item.amount || 0) : sum;
   }, 0);
   const remainingRatio = (budget - spent) / budget;
-  const remainingPercentage = Math.max(0, remainingRatio * 100);
-  const remainingPercentageLabel = `${Number(remainingPercentage.toFixed(2))}%`;
+  const remainingPercentage = Math.max(
+    0,
+    Math.min(100, Math.round(remainingRatio * 100)),
+  );
   const exhausted = remainingRatio <= 0;
   const thresholds = [
     {
       key: 'low',
-      active: remainingRatio <= 0.5 && remainingRatio > 0.25 && !exhausted,
-      title: 'Budget Warning',
+      active: remainingRatio < 0.5 && !exhausted,
+      title: 'Expense Alert',
       priority: 'warning',
-      message: `Your remaining budget is below 50%. Current remaining budget: ${remainingPercentageLabel}.`,
+      message: `Expense Alert: Your remaining balance is below 50%. You have ${remainingPercentage}% remaining.`,
     },
     {
       key: 'low25',
-      active: remainingRatio <= 0.25 && remainingRatio > 0.2 && !exhausted,
-      title: 'Budget Running Low',
-      priority: 'warning',
-      message: `Your budget is running low. Your remaining budget is ${remainingPercentageLabel}.`,
-    },
-    {
-      key: 'strong',
-      active: remainingRatio <= 0.2 && remainingRatio > 0.15 && !exhausted,
-      title: 'Budget Warning',
+      active: remainingRatio <= 0.25 && !exhausted,
+      title: 'Expense Warning',
       priority: 'high',
-      message: `Warning: Your remaining budget is ${remainingPercentageLabel}.`,
-    },
-    {
-      key: 'critical',
-      active: remainingRatio <= 0.15 && !exhausted,
-      title: 'Critical Budget Alert',
-      priority: 'critical',
-      message: `Critical Alert: Your remaining budget is ${remainingPercentageLabel}.`,
+      message: `Expense Warning: You have reached 25%. You have ${remainingPercentage}% remaining.`,
     },
     {
       key: 'exhausted',
       active: exhausted,
-      title: 'Budget exhausted',
+      title: 'Expense limit reached',
       priority: 'critical',
-      message: 'Your budget has been exhausted. You have no remaining budget.',
+      message: 'Your expenses are exhausted. Your remaining balance is 0%.',
     },
   ];
   const previous = currentPreference?.budgetAlertState || {};
-  const state = previous.version === 2 && previous.period === period
+  const state = previous.version === 3 && previous.period === period
     ? { ...previous }
     : {
-      version: 2,
+      version: 3,
       period,
       low: false,
       low25: false,
-      strong: false,
-      critical: false,
       exhausted: false,
       lowCycle: 0,
       low25Cycle: 0,
-      strongCycle: 0,
-      criticalCycle: 0,
       exhaustedCycle: 0,
     };
 

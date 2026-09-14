@@ -4,7 +4,10 @@ const asyncHandler = require("../utils/asyncHandler");
 const { recordStatusChange } = require("../services/statusService");
 const { isValidObjectId } = require("../utils/objectId");
 const { emitDataChange } = require("../config/socket");
-const { ensureBudgetNotifications } = require("../services/notificationService");
+const {
+  createNotification,
+  ensureBudgetNotifications,
+} = require("../services/notificationService");
 const fields = [
   "title",
   "category",
